@@ -29,6 +29,7 @@ import org.owntracks.android.ui.welcome.fragments.IntroFragment
 import org.owntracks.android.ui.welcome.fragments.LocationPermissionFragment
 import org.owntracks.android.ui.welcome.fragments.NotificationPermissionFragment
 import org.owntracks.android.ui.welcome.fragments.WelcomeFragment
+import org.owntracks.android.debug.RemoteDebugLogger
 import timber.log.Timber
 
 abstract class BaseWelcomeActivity : AppCompatActivity() {
@@ -52,6 +53,7 @@ abstract class BaseWelcomeActivity : AppCompatActivity() {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     Timber.tag("OT-DEBUG").d("setupCompleted=${preferences.setupCompleted}")
+    RemoteDebugLogger.log("SETUP_COMPLETED", "WelcomeActivity onCreate", mapOf("setup_completed" to preferences.setupCompleted.toString()))
     if (preferences.setupCompleted) {
       startActivity(
           Intent(this, MapActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK })

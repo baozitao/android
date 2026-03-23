@@ -54,6 +54,7 @@ import org.owntracks.android.support.interfaces.ConfigurationIncompleteException
 import org.owntracks.android.test.IdlingResourceWithData
 import org.owntracks.android.test.SimpleIdlingResource
 import org.owntracks.android.test.ThresholdIdlingResourceInterface
+import org.owntracks.android.debug.RemoteDebugLogger
 import timber.log.Timber
 
 @Singleton
@@ -216,6 +217,7 @@ constructor(
       val currentSize = outgoingQueue.size()
       Timber.d("Queueing message=$message, current queueLength:$currentSize")
       Timber.tag("OT-DEBUG").d("Message queued, queue size=${currentSize + 1}")
+      RemoteDebugLogger.log("MSG_ENQUEUE", "Message queued", mapOf("queue_size" to (currentSize + 1).toString()))
       if (!outgoingQueue.enqueue(message)) {
         val droppedMessage = outgoingQueue.dequeue()
         Timber.e("Outgoing queue full. Dropping oldest message: $droppedMessage")
@@ -325,6 +327,7 @@ constructor(
                       ?: run {
                         Timber.d("Message sent successfully: $message")
                         Timber.tag("OT-DEBUG").d("Message sent successfully")
+                        RemoteDebugLogger.log("MSG_SENT", "Message sent successfully")
                         lastMessageStatus = LastMessageStatus.Success
                         if (message !is MessageWaypoint) {
                           messageReceivedIdlingResource.add(message)

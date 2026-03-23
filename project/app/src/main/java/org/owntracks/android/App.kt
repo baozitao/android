@@ -38,6 +38,7 @@ import org.owntracks.android.services.MessageProcessor
 import org.owntracks.android.services.worker.Scheduler
 import org.owntracks.android.support.RunThingsOnOtherThreads
 import org.owntracks.android.support.receiver.StartBackgroundServiceReceiver
+import org.owntracks.android.debug.RemoteDebugLogger
 import timber.log.Timber
 
 @HiltAndroidApp
@@ -101,6 +102,7 @@ open class BaseApp :
 
   override fun onCreate() {
     Timber.tag("OT-DEBUG").d("App.onCreate started")
+    RemoteDebugLogger.log("APP_START", "App.onCreate started")
     // Make sure we use Conscrypt for advanced TLS features on all devices.
     Security.insertProviderAt(Conscrypt.newProviderBuilder().provideTrustManager(true).build(), 1)
 
@@ -150,6 +152,7 @@ open class BaseApp :
       override fun onActivityStarted(activity: android.app.Activity) {
         if (activeActivityCount.getAndIncrement() == 0) {
           Timber.tag("OT-DEBUG").d("App moved to foreground")
+          RemoteDebugLogger.log("APP_FOREGROUND", "App moved to foreground")
         }
       }
       override fun onActivityResumed(activity: android.app.Activity) {}
@@ -157,6 +160,7 @@ open class BaseApp :
       override fun onActivityStopped(activity: android.app.Activity) {
         if (activeActivityCount.decrementAndGet() == 0) {
           Timber.tag("OT-DEBUG").d("App moved to background")
+          RemoteDebugLogger.log("APP_BACKGROUND", "App moved to background")
         }
       }
       override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) {}
@@ -164,6 +168,7 @@ open class BaseApp :
     })
 
     Timber.tag("OT-DEBUG").d("App.onCreate completed")
+    RemoteDebugLogger.log("APP_START", "App.onCreate completed")
 
     // Notifications can be sent from multiple places, so let's make sure we've got the channels in
     // place

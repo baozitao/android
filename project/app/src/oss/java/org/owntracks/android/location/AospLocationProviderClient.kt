@@ -11,6 +11,7 @@ import androidx.annotation.RequiresPermission
 import androidx.core.location.LocationManagerCompat
 import androidx.core.os.ExecutorCompat
 import java.util.WeakHashMap
+import org.owntracks.android.debug.RemoteDebugLogger
 import timber.log.Timber
 
 class AospLocationProviderClient(val context: Context) : LocationProviderClient() {
@@ -52,10 +53,12 @@ class AospLocationProviderClient(val context: Context) : LocationProviderClient(
           ExecutorCompat.create(Handler(looper))) { location: Location? ->
             location?.run {
               Timber.tag("OT-DEBUG").d("Location received: lat=$latitude, lon=$longitude, acc=$accuracy, provider=$provider")
+              RemoteDebugLogger.log("AOSP_LOCATION", "Single location received", mapOf("lat" to latitude.toString(), "lon" to longitude.toString(), "acc" to accuracy.toString(), "provider" to (provider ?: "unknown")))
               clientCallBack.onLocationResult(LocationResult(this))
             } ?: run {
               Timber.w("Got null location from getCurrentLocation")
               Timber.tag("OT-DEBUG").w("Location unavailable: getCurrentLocation returned null")
+              RemoteDebugLogger.logWarn("AOSP_LOCATION", "Location unavailable: getCurrentLocation returned null")
             }
           }
     }
@@ -72,6 +75,7 @@ class AospLocationProviderClient(val context: Context) : LocationProviderClient(
     locationManager?.run {
       val listener = LocationListener { location ->
         Timber.tag("OT-DEBUG").d("Location received: lat=${location.latitude}, lon=${location.longitude}, acc=${location.accuracy}, provider=${location.provider}")
+        RemoteDebugLogger.log("AOSP_LOCATION", "Location update received", mapOf("lat" to location.latitude.toString(), "lon" to location.longitude.toString(), "acc" to location.accuracy.toString(), "provider" to (location.provider ?: "unknown")))
         clientCallBack.onLocationResult(LocationResult(location))
       }
       callbacks[clientCallBack] = listener

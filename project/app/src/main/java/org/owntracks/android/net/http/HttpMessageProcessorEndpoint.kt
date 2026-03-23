@@ -36,6 +36,7 @@ import org.owntracks.android.preferences.types.ConnectionMode
 import org.owntracks.android.services.MessageProcessor
 import org.owntracks.android.support.SocketFactory
 import org.owntracks.android.support.interfaces.ConfigurationIncompleteException
+import org.owntracks.android.debug.RemoteDebugLogger
 import timber.log.Timber
 
 class HttpMessageProcessorEndpoint(
@@ -121,15 +122,18 @@ class HttpMessageProcessorEndpoint(
       val payloadJson = message.toJson(parser)
       val payloadSize = payloadJson?.length ?: 0
       Timber.tag("OT-DEBUG").d("HTTP POST to ${configuration.url}, payload size=$payloadSize")
+      RemoteDebugLogger.log("HTTP_POST", "HTTP POST to ${configuration.url}", mapOf("payload_size" to payloadSize.toString()))
       endpointStateRepo.setState(EndpointState.CONNECTING)
       return try {
         client.newCall(getRequest(configuration, message)).execute().use { response ->
           Timber.d("HTTP response received: $response")
           Timber.tag("OT-DEBUG").d("HTTP response: code=${response.code}")
+          RemoteDebugLogger.log("HTTP_RESPONSE", "HTTP response received", mapOf("code" to response.code.toString()))
           if (!response.isSuccessful) {
             val httpException = Exception("HTTP request failed. Status: ${response.code}")
             Timber.e("HTTP request failed. Status: ${response.code}")
             Timber.tag("OT-DEBUG").e("HTTP error: HTTP request failed with code=${response.code}")
+            RemoteDebugLogger.logError("HTTP_ERROR", "HTTP request failed with code=${response.code}", mapOf("code" to response.code.toString()))
             endpointStateRepo.setState(
                 EndpointState.ERROR.withMessage(
                     String.format(Locale.ROOT, "HTTP code %d", response.code),
@@ -145,6 +149,7 @@ class HttpMessageProcessorEndpoint(
                 val responseStream = ByteArrayInputStream(responseString.toByteArray())
                 val result = parser.fromJson(responseStream)
                 Timber.tag("OT-DEBUG").d("Message sent successfully, HTTP code=${response.code}")
+                RemoteDebugLogger.log("HTTP_POST", "Message sent successfully", mapOf("code" to response.code.toString()))
                 // TODO apply i18n here
                 scope.launch {
                   endpointStateRepo.setState(
@@ -199,6 +204,7 @@ class HttpMessageProcessorEndpoint(
         endpointStateRepo.setState(EndpointState.ERROR.withError(e))
         Timber.d(e, "Execute call failed")
         Timber.tag("OT-DEBUG").e("HTTP error: ${e.message}")
+        RemoteDebugLogger.logError("HTTP_ERROR", "HTTP exception: ${e.message}", mapOf("exception" to (e.javaClass.simpleName)))
         // Sometimes we get an exception just on the execute() call
         Result.failure(OutgoingMessageSendingException(e))
       }
