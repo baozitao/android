@@ -35,7 +35,7 @@ interface DefaultsProvider {
       Preferences::ignoreStaleLocations -> 0f
       Preferences::info -> true
       Preferences::keepalive -> 3600
-      Preferences::locatorDisplacement -> 500
+      Preferences::locatorDisplacement -> 150
       Preferences::locatorInterval -> 60
       Preferences::locatorPriority -> null
       Preferences::mode -> if (BuildConfig.OT_DEFAULT_MODE == 3) ConnectionMode.HTTP else ConnectionMode.MQTT
