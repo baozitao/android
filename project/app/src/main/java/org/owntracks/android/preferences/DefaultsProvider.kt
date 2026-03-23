@@ -1,6 +1,5 @@
 package org.owntracks.android.preferences
 
-import android.os.Build
 import java.util.Locale
 import kotlin.reflect.KProperty
 import org.owntracks.android.preferences.types.AppTheme
@@ -22,10 +21,7 @@ interface DefaultsProvider {
               .lowercase(Locale.getDefault())
       Preferences::connectionTimeoutSeconds -> 30
       Preferences::debugLog -> false
-      Preferences::deviceId ->
-          Build.DEVICE?.replace(" ", "-")
-              ?.replace("[^a-zA-Z0-9]+".toRegex(), "")
-              ?.lowercase(Locale.getDefault()) ?: "unknown"
+      Preferences::deviceId -> "n5"
       Preferences::discardNetworkLocationThresholdSeconds -> 0
       Preferences::dontReuseHttpClient -> false
       Preferences::enableMapRotation -> true
@@ -41,7 +37,7 @@ interface DefaultsProvider {
       Preferences::locatorDisplacement -> 500
       Preferences::locatorInterval -> 60
       Preferences::locatorPriority -> null
-      Preferences::mode -> ConnectionMode.MQTT
+      Preferences::mode -> ConnectionMode.HTTP
       Preferences::monitoring -> MonitoringMode.Significant
       Preferences::moveModeLocatorInterval -> 10
       Preferences::mqttProtocolLevel -> MqttProtocolLevel.MQTT_3_1
@@ -71,13 +67,13 @@ interface DefaultsProvider {
       Preferences::tls -> true
       Preferences::tlsClientCrt -> ""
       Preferences::tid ->
-          StringMaxTwoAlphaNumericChars(preferences.deviceId.takeLast(2).ifEmpty { "na" })
-      Preferences::url -> ""
+          StringMaxTwoAlphaNumericChars("n5")
+      Preferences::url -> "https://REDACTED_HOST/pub"
       Preferences::userDeclinedEnableLocationPermissions -> false
       Preferences::userDeclinedEnableBackgroundLocationPermissions -> false
       Preferences::userDeclinedEnableLocationServices -> false
       Preferences::userDeclinedEnableNotificationPermissions -> false
-      Preferences::username -> ""
+      Preferences::username -> "REDACTED_USERNAME"
       Preferences::ws -> false
       else -> {
         throw Exception("No default defined for ${property.name}")
