@@ -5,8 +5,13 @@ import android.app.Application
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.Manifest
 import android.content.ComponentCallbacks2
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.os.Build
+import android.os.PowerManager
 import android.os.StrictMode
 import java.util.concurrent.atomic.AtomicInteger
 import androidx.annotation.MainThread
@@ -169,6 +174,48 @@ open class BaseApp :
 
     Timber.tag("OT-DEBUG").d("App.onCreate completed")
     RemoteDebugLogger.log("APP_START", "App.onCreate completed")
+
+    // System permission and power status check
+    val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+    val ignoringBatteryOptimizations = pm.isIgnoringBatteryOptimizations(packageName)
+
+    val notificationEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    } else true
+
+    val fineLocation = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    val backgroundLocation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED
+    } else true
+
+    val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+    val backgroundRestricted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        activityManager.isBackgroundRestricted
+    } else false
+
+    val locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+    val gpsEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+    val networkLocationEnabled = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+
+    RemoteDebugLogger.log("SYSTEM_STATUS", "System permission and power status check", mapOf(
+        "battery_unrestricted" to ignoringBatteryOptimizations.toString(),
+        "notification_enabled" to notificationEnabled.toString(),
+        "fine_location" to fineLocation.toString(),
+        "background_location" to backgroundLocation.toString(),
+        "background_restricted" to backgroundRestricted.toString(),
+        "gps_enabled" to gpsEnabled.toString(),
+        "network_location_enabled" to networkLocationEnabled.toString()
+    ))
+
+    if (!ignoringBatteryOptimizations) {
+        RemoteDebugLogger.logWarn("SYSTEM_WARNING", "Battery optimization is NOT disabled - app may be killed in background")
+    }
+    if (!backgroundLocation) {
+        RemoteDebugLogger.logWarn("SYSTEM_WARNING", "Background location permission NOT granted")
+    }
+    if (backgroundRestricted) {
+        RemoteDebugLogger.logWarn("SYSTEM_WARNING", "App is background restricted by system")
+    }
 
     // Notifications can be sent from multiple places, so let's make sure we've got the channels in
     // place
