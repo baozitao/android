@@ -161,7 +161,7 @@ class PreferencesGettersAndSetters(private val parameter: Parameter) {
                   preferenceValueInConfiguration = 1),
               Parameter(
                   "monitoring",
-                  MonitoringMode.Significant,
+                  MonitoringMode.Adaptive,
                   MonitoringMode::class,
                   false,
                   preferenceValueInConfiguration = -5),

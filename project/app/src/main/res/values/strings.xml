@@ -108,10 +108,13 @@ To allow this, please enable Location in the device settings."</string>
     <string name="mode_heading">"Mode"</string>
     <string name="mode_http_private_label">"HTTP"</string>
     <string name="mode_mqtt_private_label">"MQTT"</string>
+    <string name="monitoring_adaptive">"Adaptive monitoring mode"</string>
     <string name="monitoring_manual">"Manual monitoring mode"</string>
     <string name="monitoring_move">"Move monitoring mode"</string>
     <string name="monitoring_quiet">"Quiet monitoring mode"</string>
     <string name="monitoring_significant">"Significant changes monitoring mode"</string>
+    <string name="monitoringModeDialogAdaptiveDescription">"Speed-based dynamic interval, balances accuracy and battery"</string>
+    <string name="monitoringModeDialogAdaptiveTitle">"Adaptive"</string>
     <string name="monitoringModeDialogManualDescription">"Only waypoint transitions published automatically, not locations"</string>
     <string name="monitoringModeDialogManualTitle">"Manual"</string>
     <string name="monitoringModeDialogMoveDescription">"High frequency and accuracy, but high power usage"</string>

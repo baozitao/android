@@ -23,7 +23,8 @@ class MonitoringModeBottomSheetDialog : BottomSheetDialogFragment() {
             binding.fabMonitoringModeQuiet to MonitoringMode.Quiet,
             binding.fabMonitoringModeManual to MonitoringMode.Manual,
             binding.fabMonitoringModeSignificantChanges to MonitoringMode.Significant,
-            binding.fabMonitoringModeMove to MonitoringMode.Move)
+            binding.fabMonitoringModeMove to MonitoringMode.Move,
+            binding.fabMonitoringModeAdaptive to MonitoringMode.Adaptive)
         .forEach {
           it.key.setOnClickListener { _ ->
             viewModel.setMonitoringMode(it.value)

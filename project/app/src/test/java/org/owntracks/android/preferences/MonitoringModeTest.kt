@@ -27,8 +27,13 @@ class MonitoringModeTest {
   }
 
   @Test
-  fun `Resolving unknown value gets default significant mode`() {
-    assertEquals(MonitoringMode.Significant, MonitoringMode.getByValue(50))
+  fun `Resolving adaptive mode by value gets adaptive mode`() {
+    assertEquals(MonitoringMode.Adaptive, MonitoringMode.getByValue(3))
+  }
+
+  @Test
+  fun `Resolving unknown value gets default adaptive mode`() {
+    assertEquals(MonitoringMode.Adaptive, MonitoringMode.getByValue(50))
   }
 
   @Test
@@ -47,7 +52,12 @@ class MonitoringModeTest {
   }
 
   @Test
-  fun `The next mode after move is quiet`() {
-    assertEquals(MonitoringMode.Quiet, MonitoringMode.Move.next())
+  fun `The next mode after move is adaptive`() {
+    assertEquals(MonitoringMode.Adaptive, MonitoringMode.Move.next())
+  }
+
+  @Test
+  fun `The next mode after adaptive is quiet`() {
+    assertEquals(MonitoringMode.Quiet, MonitoringMode.Adaptive.next())
   }
 }

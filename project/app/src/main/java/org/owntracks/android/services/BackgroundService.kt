@@ -131,8 +131,8 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
   private var lastIntervalSwitchTime: Long = 0L
 
   private fun onLocationReceivedForAdaptiveInterval(location: Location) {
-    // 只在 Significant 模式下工作
-    if (preferences.monitoring != MonitoringMode.Significant) return
+    // 只在 Adaptive 模式下工作
+    if (preferences.monitoring != MonitoringMode.Adaptive) return
 
     // 1. accuracy 过滤：精度 >50m 的不参与计算
     if (location.accuracy > 50f) return
@@ -710,6 +710,12 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
 
         MonitoringMode.Move -> {
           interval = Duration.ofSeconds(preferences.moveModeLocatorInterval.toLong())
+          priority = preferences.locatorPriority ?: LocatorPriority.HighAccuracy
+        }
+
+        MonitoringMode.Adaptive -> {
+          interval = Duration.ofSeconds(currentAdaptiveInterval)
+          smallestDisplacement = 0f
           priority = preferences.locatorPriority ?: LocatorPriority.HighAccuracy
         }
       }

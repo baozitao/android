@@ -115,7 +115,7 @@ abstract class PreferencesStore :
                 ReverseGeocodeProvider.getByValue(getString(property.name, "") ?: "")
             typeOf<MapLayerStyle>() -> MapLayerStyle.valueOf(getString(property.name, "") ?: "")
             typeOf<ConnectionMode>() -> ConnectionMode.getByValue(getInt(property.name, -1))
-            typeOf<MonitoringMode>() -> MonitoringMode.getByValue(getInt(property.name, 1))
+            typeOf<MonitoringMode>() -> MonitoringMode.getByValue(getInt(property.name, 3))
             typeOf<MqttProtocolLevel>() -> MqttProtocolLevel.getByValue(getInt(property.name, 3))
             typeOf<MqttQos>() -> MqttQos.getByValue(getInt(property.name, 1))
             typeOf<AppTheme>() -> AppTheme.getByValue(getInt(property.name, 0))

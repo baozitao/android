@@ -124,6 +124,7 @@ class OngoingNotification(private val context: Context, initialMode: MonitoringM
           MonitoringMode.Manual -> getString(R.string.monitoring_manual)
           MonitoringMode.Significant -> getString(R.string.monitoring_significant)
           MonitoringMode.Move -> getString(R.string.monitoring_move)
+          MonitoringMode.Adaptive -> getString(R.string.monitoring_adaptive)
         }
       }
 

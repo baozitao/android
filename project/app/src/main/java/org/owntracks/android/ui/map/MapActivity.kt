@@ -748,6 +748,10 @@ class MapActivity :
           setIcon(R.drawable.ic_step_forward_2)
           setTitle(R.string.monitoring_move)
         }
+        MonitoringMode.Adaptive -> {
+          setIcon(R.drawable.ic_baseline_autorenew_24)
+          setTitle(R.string.monitoring_adaptive)
+        }
       }
     }
   }

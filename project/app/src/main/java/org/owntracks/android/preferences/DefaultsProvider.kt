@@ -39,7 +39,7 @@ interface DefaultsProvider {
       Preferences::locatorInterval -> 300
       Preferences::locatorPriority -> null
       Preferences::mode -> if (BuildConfig.OT_DEFAULT_MODE == 3) ConnectionMode.HTTP else ConnectionMode.MQTT
-      Preferences::monitoring -> MonitoringMode.Significant
+      Preferences::monitoring -> MonitoringMode.Adaptive
       Preferences::moveModeLocatorInterval -> 10
       Preferences::mqttProtocolLevel -> MqttProtocolLevel.MQTT_3_1
       Preferences::notificationEvents -> true
