@@ -17,12 +17,14 @@ class EndpointStateRepo @Inject constructor() {
   val serviceStartedDate: MutableStateFlow<Instant> = MutableStateFlow(Instant.now())
 
   suspend fun setState(newEndpointState: EndpointState) {
+    val oldState = endpointState.value
     Timber.v(
         "Setting endpoint state $newEndpointState called from: ${
             Thread.currentThread().stackTrace[3].run {
                 "$className: $methodName"
             }
             }")
+    Timber.tag("OT-DEBUG").d("EndpointState changed: $oldState -> $newEndpointState")
     endpointState.emit(newEndpointState)
   }
 

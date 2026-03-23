@@ -118,13 +118,18 @@ class HttpMessageProcessorEndpoint(
     message.setTopicVisible()
 
     httpClientAndConfiguration!!.run {
+      val payloadJson = message.toJson(parser)
+      val payloadSize = payloadJson?.length ?: 0
+      Timber.tag("OT-DEBUG").d("HTTP POST to ${configuration.url}, payload size=$payloadSize")
       endpointStateRepo.setState(EndpointState.CONNECTING)
       return try {
         client.newCall(getRequest(configuration, message)).execute().use { response ->
           Timber.d("HTTP response received: $response")
+          Timber.tag("OT-DEBUG").d("HTTP response: code=${response.code}")
           if (!response.isSuccessful) {
             val httpException = Exception("HTTP request failed. Status: ${response.code}")
             Timber.e("HTTP request failed. Status: ${response.code}")
+            Timber.tag("OT-DEBUG").e("HTTP error: HTTP request failed with code=${response.code}")
             endpointStateRepo.setState(
                 EndpointState.ERROR.withMessage(
                     String.format(Locale.ROOT, "HTTP code %d", response.code),
@@ -139,6 +144,7 @@ class HttpMessageProcessorEndpoint(
                 Timber.d("HTTP response body: ${responseString.take(1000)}")
                 val responseStream = ByteArrayInputStream(responseString.toByteArray())
                 val result = parser.fromJson(responseStream)
+                Timber.tag("OT-DEBUG").d("Message sent successfully, HTTP code=${response.code}")
                 // TODO apply i18n here
                 scope.launch {
                   endpointStateRepo.setState(
@@ -192,6 +198,7 @@ class HttpMessageProcessorEndpoint(
       } catch (e: Exception) {
         endpointStateRepo.setState(EndpointState.ERROR.withError(e))
         Timber.d(e, "Execute call failed")
+        Timber.tag("OT-DEBUG").e("HTTP error: ${e.message}")
         // Sometimes we get an exception just on the execute() call
         Result.failure(OutgoingMessageSendingException(e))
       }

@@ -29,6 +29,7 @@ import org.owntracks.android.ui.welcome.fragments.IntroFragment
 import org.owntracks.android.ui.welcome.fragments.LocationPermissionFragment
 import org.owntracks.android.ui.welcome.fragments.NotificationPermissionFragment
 import org.owntracks.android.ui.welcome.fragments.WelcomeFragment
+import timber.log.Timber
 
 abstract class BaseWelcomeActivity : AppCompatActivity() {
   private val viewModel: WelcomeViewModel by viewModels()
@@ -50,6 +51,7 @@ abstract class BaseWelcomeActivity : AppCompatActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    Timber.tag("OT-DEBUG").d("setupCompleted=${preferences.setupCompleted}")
     if (preferences.setupCompleted) {
       startActivity(
           Intent(this, MapActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK })

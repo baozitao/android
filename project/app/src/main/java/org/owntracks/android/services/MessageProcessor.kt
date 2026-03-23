@@ -215,6 +215,7 @@ constructor(
     scope.launch(ioDispatcher) {
       val currentSize = outgoingQueue.size()
       Timber.d("Queueing message=$message, current queueLength:$currentSize")
+      Timber.tag("OT-DEBUG").d("Message queued, queue size=${currentSize + 1}")
       if (!outgoingQueue.enqueue(message)) {
         val droppedMessage = outgoingQueue.dequeue()
         Timber.e("Outgoing queue full. Dropping oldest message: $droppedMessage")
@@ -323,6 +324,7 @@ constructor(
                   }
                       ?: run {
                         Timber.d("Message sent successfully: $message")
+                        Timber.tag("OT-DEBUG").d("Message sent successfully")
                         lastMessageStatus = LastMessageStatus.Success
                         if (message !is MessageWaypoint) {
                           messageReceivedIdlingResource.add(message)

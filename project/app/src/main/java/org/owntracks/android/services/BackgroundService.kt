@@ -155,6 +155,7 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
 
   override fun onCreate() {
     Timber.v("Backgroundservice onCreate")
+    Timber.tag("OT-DEBUG").d("BackgroundService.onCreate")
     val entrypoint = EntryPoints.get(applicationContext, ServiceEntrypoint::class.java)
     preferences = entrypoint.preferences()
     endpointStateRepo = entrypoint.endpointStateRepo()
@@ -170,6 +171,14 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
       Timber.i(
           "Permissions. POST_NOTIFICATIONS: ${ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)==PERMISSION_GRANTED}")
     }
+    val fineLocationGranted = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PERMISSION_GRANTED
+    val bgLocationGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PERMISSION_GRANTED
+    } else { true }
+    val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+    val batteryExempted = powerManager.isIgnoringBatteryOptimizations(packageName)
+    Timber.tag("OT-DEBUG").d("Location permission: $fineLocationGranted, Background location: $bgLocationGranted")
+    Timber.tag("OT-DEBUG").d("Battery optimization exempted: $batteryExempted")
 
     super.onCreate()
 
@@ -245,6 +254,7 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
 
   override fun onDestroy() {
     Timber.v("Backgroundservice onDestroy")
+    Timber.tag("OT-DEBUG").d("BackgroundService.onDestroy")
     stopForeground(STOP_FOREGROUND_REMOVE)
     unregisterReceiver(powerBroadcastReceiver)
     significantMotionSensor.cancel()
@@ -255,6 +265,7 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     Timber.v("Backgroundservice onStartCommand intent=$intent")
+    Timber.tag("OT-DEBUG").d("BackgroundService.onStartCommand intent=${intent?.action}")
     super.onStartCommand(intent, flags, startId)
     handleIntent(intent)
     startForegroundService()
@@ -674,6 +685,11 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
         0)
   }
 
+  override fun onTaskRemoved(rootIntent: Intent?) {
+    super.onTaskRemoved(rootIntent)
+    Timber.tag("OT-DEBUG").d("BackgroundService.onTaskRemoved")
+  }
+
   private val localServiceBinder: IBinder = LocalBinder()
 
   inner class LocalBinder : Binder() {
@@ -716,11 +732,14 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
 
     override fun onLocationResult(locationResult: LocationResult) {
       Timber.d("Location result received: $locationResult")
-      onLocationChanged(locationResult.lastLocation, reportType)
+      val loc = locationResult.lastLocation
+      Timber.tag("OT-DEBUG").d("Location received: lat=${loc.latitude}, lon=${loc.longitude}, acc=${loc.accuracy}, provider=${loc.provider}")
+      onLocationChanged(loc, reportType)
     }
 
     override fun onLocationError() {
       Timber.v("Callback fired with no location received")
+      Timber.tag("OT-DEBUG").w("Location unavailable: callback fired with no location")
     }
 
     private fun onLocationChanged(location: Location, reportType: MessageLocation.ReportType) {

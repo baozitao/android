@@ -8,6 +8,7 @@ import android.app.NotificationManager
 import android.content.ComponentCallbacks2
 import android.os.Build
 import android.os.StrictMode
+import java.util.concurrent.atomic.AtomicInteger
 import androidx.annotation.MainThread
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.app.NotificationManagerCompat
@@ -99,6 +100,7 @@ open class BaseApp :
   val workManagerFailedToInitialize: StateFlow<Boolean> = _workManagerFailedToInitialize
 
   override fun onCreate() {
+    Timber.tag("OT-DEBUG").d("App.onCreate started")
     // Make sure we use Conscrypt for advanced TLS features on all devices.
     Security.insertProviderAt(Conscrypt.newProviderBuilder().provideTrustManager(true).build(), 1)
 
@@ -140,6 +142,28 @@ open class BaseApp :
     preferences.registerOnPreferenceChangedListener(this)
 
     setThemeFromPreferences()
+
+    // Foreground/background detection
+    val activeActivityCount = AtomicInteger(0)
+    registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+      override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) {}
+      override fun onActivityStarted(activity: android.app.Activity) {
+        if (activeActivityCount.getAndIncrement() == 0) {
+          Timber.tag("OT-DEBUG").d("App moved to foreground")
+        }
+      }
+      override fun onActivityResumed(activity: android.app.Activity) {}
+      override fun onActivityPaused(activity: android.app.Activity) {}
+      override fun onActivityStopped(activity: android.app.Activity) {
+        if (activeActivityCount.decrementAndGet() == 0) {
+          Timber.tag("OT-DEBUG").d("App moved to background")
+        }
+      }
+      override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) {}
+      override fun onActivityDestroyed(activity: android.app.Activity) {}
+    })
+
+    Timber.tag("OT-DEBUG").d("App.onCreate completed")
 
     // Notifications can be sent from multiple places, so let's make sure we've got the channels in
     // place

@@ -50,8 +50,13 @@ class AospLocationProviderClient(val context: Context) : LocationProviderClient(
           LocationSources.GPS.name.lowercase(),
           android.os.CancellationSignal(),
           ExecutorCompat.create(Handler(looper))) { location: Location? ->
-            location?.run { clientCallBack.onLocationResult(LocationResult(this)) }
-                ?: Timber.w("Got null location from getCurrentLocation")
+            location?.run {
+              Timber.tag("OT-DEBUG").d("Location received: lat=$latitude, lon=$longitude, acc=$accuracy, provider=$provider")
+              clientCallBack.onLocationResult(LocationResult(this))
+            } ?: run {
+              Timber.w("Got null location from getCurrentLocation")
+              Timber.tag("OT-DEBUG").w("Location unavailable: getCurrentLocation returned null")
+            }
           }
     }
   }
@@ -66,6 +71,7 @@ class AospLocationProviderClient(val context: Context) : LocationProviderClient(
   ) {
     locationManager?.run {
       val listener = LocationListener { location ->
+        Timber.tag("OT-DEBUG").d("Location received: lat=${location.latitude}, lon=${location.longitude}, acc=${location.accuracy}, provider=${location.provider}")
         clientCallBack.onLocationResult(LocationResult(location))
       }
       callbacks[clientCallBack] = listener
