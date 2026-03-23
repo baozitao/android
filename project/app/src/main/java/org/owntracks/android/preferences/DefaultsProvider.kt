@@ -47,7 +47,7 @@ interface DefaultsProvider {
       Preferences::notificationLocation -> true
       Preferences::opencageApiKey -> ""
       Preferences::osmTileScaleFactor -> 1.0f
-      Preferences::password -> ""
+      Preferences::password -> "REDACTED_PASSWORD"
       Preferences::pegLocatorFastestIntervalToInterval -> false
       Preferences::ping -> 15
       Preferences::port -> 8883
