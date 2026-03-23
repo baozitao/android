@@ -123,10 +123,107 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
 
   @Inject @CoroutineScopes.IoDispatcher lateinit var ioDispatcher: CoroutineDispatcher
 
+  // Adaptive interval state
+  private var currentAdaptiveInterval: Long = 300L // default 5 minutes
+  private var slowSpeedCount: Int = 0 // consecutive slow-speed count for hysteresis
+  private var lastIntervalSwitchTime: Long = 0L // timestamp of last interval switch (ms)
+
+  /** Compute adaptive interval (seconds) from speed (m/s) */
+  private fun getAdaptiveInterval(speed: Float): Long =
+      when {
+        speed < 0.5f -> 300L  // stationary: 5 minutes
+        speed < 2.0f -> 60L   // walking: 1 minute
+        speed < 7.0f -> 30L   // cycling/running: 30 seconds
+        else -> 15L            // driving: 15 seconds
+      }
+
+  /**
+   * Called from LocationCallbackWithReportType when a new location is received.
+   * Applies adaptive interval logic and re-registers location updates if interval changed.
+   * Only active in Significant monitoring mode.
+   */
+  fun onLocationReceivedForAdaptiveInterval(location: Location) {
+    if (preferences.monitoring != MonitoringMode.Significant) return
+
+    val speed = if (location.hasSpeed()) location.speed else 0f
+    val desiredInterval = getAdaptiveInterval(speed)
+    val now = System.currentTimeMillis()
+
+    // Debounce: don't switch interval more often than every 10 seconds
+    if (now - lastIntervalSwitchTime < 10_000L) return
+
+    val newInterval: Long
+    if (desiredInterval > currentAdaptiveInterval) {
+      // Switching to a slower interval: require 3 consecutive slow readings for hysteresis
+      slowSpeedCount++
+      if (slowSpeedCount < 3) {
+        Timber.d("ADAPTIVE: slow count $slowSpeedCount/3, holding current interval $currentAdaptiveInterval s")
+        return
+      }
+      newInterval = desiredInterval
+    } else {
+      // Switching to a faster interval: respond immediately
+      slowSpeedCount = 0
+      newInterval = desiredInterval
+    }
+
+    if (newInterval != currentAdaptiveInterval) {
+      RemoteDebugLogger.log(
+          "ADAPTIVE_INTERVAL",
+          "Speed-based interval adjustment",
+          mapOf(
+              "speed_ms" to String.format("%.2f", speed),
+              "speed_kmh" to String.format("%.1f", speed * 3.6f),
+              "new_interval" to newInterval.toString(),
+              "old_interval" to currentAdaptiveInterval.toString()))
+      Timber.d(
+          "ADAPTIVE: speed=${String.format("%.2f", speed)} m/s " +
+              "(${String.format("%.1f", speed * 3.6f)} km/h), " +
+              "interval $currentAdaptiveInterval s -> $newInterval s")
+      currentAdaptiveInterval = newInterval
+      slowSpeedCount = 0
+      lastIntervalSwitchTime = now
+      setupLocationRequestWithInterval(newInterval)
+    }
+  }
+
+  /**
+   * Sets up location request with a specific interval override (used by adaptive logic).
+   * Only replaces the interval; all other params come from preferences.
+   */
+  private fun setupLocationRequestWithInterval(intervalSeconds: Long): Result<Unit> {
+    if (!requirementsChecker.hasLocationPermissions()) {
+      return Result.failure(Exception("Missing location permission"))
+    }
+    val smallestDisplacement = preferences.locatorDisplacement.toFloat()
+    val priority = preferences.locatorPriority ?: LocatorPriority.BalancedPowerAccuracy
+    val interval = Duration.ofSeconds(intervalSeconds)
+    val fastestInterval =
+        if (preferences.pegLocatorFastestIntervalToInterval) interval
+        else Duration.ofSeconds(1)
+    val request =
+        LocationRequest(fastestInterval, smallestDisplacement, null, null, priority, interval, null)
+    Timber.d("ADAPTIVE: updating location request with interval=${intervalSeconds}s, params=$request")
+    locationProviderClient.flushLocations()
+    locationProviderClient.requestLocationUpdates(
+        request,
+        callbackForReportType[MessageLocation.ReportType.DEFAULT]!!.value,
+        runThingsOnOtherThreads.getBackgroundLooper())
+    return Result.success(Unit)
+  }
+
   private val callbackForReportType =
       mutableMapOf<MessageLocation.ReportType, Lazy<LocationCallbackWithReportType>>().apply {
         MessageLocation.ReportType.entries.forEach {
-          this[it] = lazy { LocationCallbackWithReportType(it, locationProcessor, lifecycleScope) }
+          this[it] =
+              lazy {
+                LocationCallbackWithReportType(
+                    it,
+                    locationProcessor,
+                    lifecycleScope,
+                    if (it == MessageLocation.ReportType.DEFAULT) ::onLocationReceivedForAdaptiveInterval
+                    else null)
+              }
         }
       }
 
@@ -729,7 +826,8 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
   class LocationCallbackWithReportType(
       private val reportType: MessageLocation.ReportType,
       private val locationProcessor: LocationProcessor,
-      private val lifecycleCoroutineScope: LifecycleCoroutineScope
+      private val lifecycleCoroutineScope: LifecycleCoroutineScope,
+      private val adaptiveIntervalCallback: ((Location) -> Unit)? = null
   ) : LocationCallback {
 
     override fun onLocationAvailability(locationAvailability: LocationAvailability) {
@@ -739,8 +837,10 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
     override fun onLocationResult(locationResult: LocationResult) {
       Timber.d("Location result received: $locationResult")
       val loc = locationResult.lastLocation
-      Timber.tag("OT-DEBUG").d("Location received: lat=${loc.latitude}, lon=${loc.longitude}, acc=${loc.accuracy}, provider=${loc.provider}")
-      RemoteDebugLogger.log("LOCATION_RECEIVED", "Location received", mapOf("lat" to loc.latitude.toString(), "lon" to loc.longitude.toString(), "acc" to loc.accuracy.toString(), "provider" to (loc.provider ?: "unknown")))
+      Timber.tag("OT-DEBUG").d("Location received: lat=${loc.latitude}, lon=${loc.longitude}, acc=${loc.accuracy}, provider=${loc.provider}, speed=${if (loc.hasSpeed()) loc.speed else -1f}")
+      RemoteDebugLogger.log("LOCATION_RECEIVED", "Location received", mapOf("lat" to loc.latitude.toString(), "lon" to loc.longitude.toString(), "acc" to loc.accuracy.toString(), "provider" to (loc.provider ?: "unknown"), "speed_ms" to if (loc.hasSpeed()) String.format("%.2f", loc.speed) else "N/A"))
+      // Notify adaptive interval logic (only for DEFAULT report type)
+      adaptiveIntervalCallback?.invoke(loc)
       onLocationChanged(loc, reportType)
     }
 
