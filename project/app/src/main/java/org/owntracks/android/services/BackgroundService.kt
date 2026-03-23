@@ -179,9 +179,9 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
     if (now - lastIntervalSwitchTime < 10_000) return // 10秒防抖
 
     if (newInterval > currentAdaptiveInterval) {
-      // 减速：需要连续3次慢才切
+      // 减速：需要连续6次慢才切
       slowSpeedCount++
-      if (slowSpeedCount < 3) return
+      if (slowSpeedCount < 6) return
     } else if (newInterval < currentAdaptiveInterval) {
       // 加速：立即响应
       slowSpeedCount = 0
@@ -229,7 +229,7 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
   private fun getAdaptiveInterval(speed: Float): Long =
       when {
         speed < 0.5f -> 300L  // 静止：5分钟
-        speed < 2.0f -> 60L   // 步行：1分钟
+        speed < 2.0f -> 30L   // 步行：30秒
         speed < 7.0f -> 30L   // 骑车：30秒
         else -> 15L            // 开车：15秒
       }
