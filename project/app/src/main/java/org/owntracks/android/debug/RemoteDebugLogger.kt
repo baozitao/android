@@ -14,12 +14,12 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
- * 远程调试日志上报器，将 OT-DEBUG 日志异步上报到 REDACTED_DEBUG_HOST
+ * 远程调试日志上报器，将 OT-DEBUG 日志异步上报到远程服务器
  * 单例模式，非阻塞，失败静默
  */
 object RemoteDebugLogger {
 
-    private val LOG_URL = BuildConfig.OT_DEBUG_URL.ifEmpty { "https://REDACTED_DEBUG_HOST/api/log" }
+    private val LOG_URL = BuildConfig.OT_DEBUG_URL
     private const val APP_NAME = "owntracks"
     private const val TAG = "RemoteDebugLogger"
     private const val BATCH_SIZE = 10
@@ -123,6 +123,7 @@ object RemoteDebugLogger {
     }
 
     private fun sendLog(entry: LogEntry) {
+        if (LOG_URL.isEmpty()) return
         var connection: HttpURLConnection? = null
         try {
             val json = buildJson(entry)
