@@ -123,69 +123,116 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
 
   @Inject @CoroutineScopes.IoDispatcher lateinit var ioDispatcher: CoroutineDispatcher
 
-  // Adaptive interval state
-  private var currentAdaptiveInterval: Long = 300L // default 5 minutes
-  private var slowSpeedCount: Int = 0 // consecutive slow-speed count for hysteresis
-  private var lastIntervalSwitchTime: Long = 0L // timestamp of last interval switch (ms)
+  // 自适应上报 - 速度过滤参数
+  private val speedHistory = mutableListOf<Float>() // 最近N次速度
+  private val locationHistory = mutableListOf<Location>() // 最近N次位置
+  private var currentAdaptiveInterval: Long = 300L
+  private var slowSpeedCount: Int = 0
+  private var lastIntervalSwitchTime: Long = 0L
+
+  private fun onLocationReceivedForAdaptiveInterval(location: Location) {
+    // 只在 Significant 模式下工作
+    if (preferences.monitoring != MonitoringMode.Significant) return
+
+    // 1. accuracy 过滤：精度 >50m 的不参与计算
+    if (location.accuracy > 50f) return
+
+    // 2. 计算与上一个有效位置的距离
+    val prevLocation = locationHistory.lastOrNull()
+    if (prevLocation != null) {
+      val distance = location.distanceTo(prevLocation)
+
+      // 3. 位移 <50m 视为静止（GPS漂移范围）
+      if (distance < 50f) {
+        // 当作速度 0 处理
+        addSpeedSample(0f)
+      } else {
+        // 用实际速度（优先 GPS 速度，其次计算速度）
+        val speed = if (location.hasSpeed() && location.speed > 0) {
+          location.speed
+        } else {
+          val timeDiff = (location.time - prevLocation.time) / 1000f
+          if (timeDiff > 0) distance / timeDiff else 0f
+        }
+
+        // 4. 异常值过滤：突然从 0 跳到 >100km/h 不合理
+        val avgSpeed = getAverageSpeed()
+        if (avgSpeed < 1f && speed > 27.8f) { // 0→100km/h 的跳变
+          // 忽略这个异常值
+          return
+        }
+
+        addSpeedSample(speed)
+      }
+    }
+
+    // 保存有效位置
+    locationHistory.add(location)
+    if (locationHistory.size > 10) locationHistory.removeAt(0)
+
+    // 5. 用滑动窗口平均速度决定间隔
+    val avgSpeed = getAverageSpeed()
+    val newInterval = getAdaptiveInterval(avgSpeed)
+
+    // 6. 切换逻辑（快切慢需要稳定，慢切快立即响应）
+    val now = System.currentTimeMillis()
+    if (now - lastIntervalSwitchTime < 10_000) return // 10秒防抖
+
+    if (newInterval > currentAdaptiveInterval) {
+      // 减速：需要连续3次慢才切
+      slowSpeedCount++
+      if (slowSpeedCount < 3) return
+    } else if (newInterval < currentAdaptiveInterval) {
+      // 加速：立即响应
+      slowSpeedCount = 0
+    } else {
+      slowSpeedCount = 0
+      return // 间隔没变
+    }
+
+    // 切换间隔
+    val oldInterval = currentAdaptiveInterval
+    currentAdaptiveInterval = newInterval
+    slowSpeedCount = 0
+    lastIntervalSwitchTime = now
+
+    // debug 日志
+    RemoteDebugLogger.log("ADAPTIVE_INTERVAL", "Speed-based interval adjustment", mapOf(
+        "avg_speed_ms" to String.format("%.2f", avgSpeed),
+        "avg_speed_kmh" to String.format("%.1f", avgSpeed * 3.6f),
+        "new_interval" to newInterval.toString(),
+        "old_interval" to oldInterval.toString(),
+        "speed_samples" to speedHistory.size.toString()
+    ))
+    Timber.d(
+        "ADAPTIVE: avg_speed=${String.format("%.2f", avgSpeed)} m/s " +
+            "(${String.format("%.1f", avgSpeed * 3.6f)} km/h), " +
+            "interval $oldInterval s -> $newInterval s")
+
+    // 更新定位请求
+    setupLocationRequestWithInterval(newInterval)
+  }
+
+  private fun addSpeedSample(speed: Float) {
+    speedHistory.add(speed)
+    if (speedHistory.size > 5) speedHistory.removeAt(0)
+  }
+
+  private fun getAverageSpeed(): Float {
+    if (speedHistory.isEmpty()) return 0f
+    // 用中位数而非平均值，更抗异常值
+    val sorted = speedHistory.sorted()
+    return sorted[sorted.size / 2]
+  }
 
   /** Compute adaptive interval (seconds) from speed (m/s) */
   private fun getAdaptiveInterval(speed: Float): Long =
       when {
-        speed < 0.5f -> 300L  // stationary: 5 minutes
-        speed < 2.0f -> 60L   // walking: 1 minute
-        speed < 7.0f -> 30L   // cycling/running: 30 seconds
-        else -> 15L            // driving: 15 seconds
+        speed < 0.5f -> 300L  // 静止：5分钟
+        speed < 2.0f -> 60L   // 步行：1分钟
+        speed < 7.0f -> 30L   // 骑车：30秒
+        else -> 15L            // 开车：15秒
       }
-
-  /**
-   * Called from LocationCallbackWithReportType when a new location is received.
-   * Applies adaptive interval logic and re-registers location updates if interval changed.
-   * Only active in Significant monitoring mode.
-   */
-  fun onLocationReceivedForAdaptiveInterval(location: Location) {
-    if (preferences.monitoring != MonitoringMode.Significant) return
-
-    val speed = if (location.hasSpeed()) location.speed else 0f
-    val desiredInterval = getAdaptiveInterval(speed)
-    val now = System.currentTimeMillis()
-
-    // Debounce: don't switch interval more often than every 10 seconds
-    if (now - lastIntervalSwitchTime < 10_000L) return
-
-    val newInterval: Long
-    if (desiredInterval > currentAdaptiveInterval) {
-      // Switching to a slower interval: require 3 consecutive slow readings for hysteresis
-      slowSpeedCount++
-      if (slowSpeedCount < 3) {
-        Timber.d("ADAPTIVE: slow count $slowSpeedCount/3, holding current interval $currentAdaptiveInterval s")
-        return
-      }
-      newInterval = desiredInterval
-    } else {
-      // Switching to a faster interval: respond immediately
-      slowSpeedCount = 0
-      newInterval = desiredInterval
-    }
-
-    if (newInterval != currentAdaptiveInterval) {
-      RemoteDebugLogger.log(
-          "ADAPTIVE_INTERVAL",
-          "Speed-based interval adjustment",
-          mapOf(
-              "speed_ms" to String.format("%.2f", speed),
-              "speed_kmh" to String.format("%.1f", speed * 3.6f),
-              "new_interval" to newInterval.toString(),
-              "old_interval" to currentAdaptiveInterval.toString()))
-      Timber.d(
-          "ADAPTIVE: speed=${String.format("%.2f", speed)} m/s " +
-              "(${String.format("%.1f", speed * 3.6f)} km/h), " +
-              "interval $currentAdaptiveInterval s -> $newInterval s")
-      currentAdaptiveInterval = newInterval
-      slowSpeedCount = 0
-      lastIntervalSwitchTime = now
-      setupLocationRequestWithInterval(newInterval)
-    }
-  }
 
   /**
    * Sets up location request with a specific interval override (used by adaptive logic).
