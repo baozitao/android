@@ -2,6 +2,7 @@ package org.owntracks.android.services
 
 import android.Manifest
 import android.app.ActivityManager
+import android.app.AlarmManager
 import android.app.ForegroundServiceStartNotAllowedException
 import android.app.Notification
 import android.app.PendingIntent
@@ -18,6 +19,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.Process
+import android.os.SystemClock
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.style.StyleSpan
@@ -397,6 +399,10 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
         endpointStateRepo.setServiceStartedNow()
       }
     }
+
+    // Start service watchdog
+    ServiceWatchdogReceiver.scheduleNext(this)
+    Timber.tag("OT-DEBUG").d("BackgroundService.onCreate - watchdog scheduled")
   }
 
   override fun onDestroy() {
@@ -842,8 +848,25 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
 
   override fun onTaskRemoved(rootIntent: Intent?) {
     super.onTaskRemoved(rootIntent)
-    Timber.tag("OT-DEBUG").d("BackgroundService.onTaskRemoved")
-    RemoteDebugLogger.log("TASK_REMOVED", "BackgroundService.onTaskRemoved - app被系统移除任务栈")
+    Timber.tag("OT-DEBUG").d("BackgroundService.onTaskRemoved - scheduling restart")
+    RemoteDebugLogger.logWarn("TASK_REMOVED", "App killed by system - scheduling restart in 1s")
+
+    try {
+        val restartIntent = Intent(applicationContext, BackgroundService::class.java)
+        val pendingIntent = PendingIntent.getService(
+            applicationContext, 1001, restartIntent,
+            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        alarmManager.setExactAndAllowWhileIdle(
+            AlarmManager.ELAPSED_REALTIME_WAKEUP,
+            SystemClock.elapsedRealtime() + 1000L,
+            pendingIntent
+        )
+        Timber.tag("OT-DEBUG").d("Restart alarm scheduled")
+    } catch (e: Exception) {
+        Timber.tag("OT-DEBUG").e(e, "Failed to schedule restart alarm")
+    }
   }
 
   private val localServiceBinder: IBinder = LocalBinder()
