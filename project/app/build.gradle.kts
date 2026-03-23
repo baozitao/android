@@ -1,3 +1,4 @@
+import java.util.Properties
 import org.gradle.api.tasks.testing.logging.TestLogEvent
 
 plugins {
@@ -15,6 +16,13 @@ val googleMapsAPIKey =
     System.getenv("GOOGLE_MAPS_API_KEY")
         ?: extra.get("google_maps_api_key")?.toString()
         ?: "PLACEHOLDER_API_KEY"
+
+// 从 owntracks.properties 读取私有配置
+val otPropsFile = rootProject.file("owntracks.properties")
+val otProps = Properties()
+if (otPropsFile.exists()) {
+  otProps.load(otPropsFile.inputStream())
+}
 
 val gmsImplementation: Configuration by configurations.creating
 
@@ -57,6 +65,18 @@ android {
         "int",
         "TRANSLATION_COUNT",
         localeCount.toString(),
+    )
+
+    buildConfigField("String", "OT_DEFAULT_URL", "\"${otProps.getProperty("owntracks.url", "")}\"")
+    buildConfigField("String", "OT_DEFAULT_USERNAME", "\"${otProps.getProperty("owntracks.username", "")}\"")
+    buildConfigField("String", "OT_DEFAULT_PASSWORD", "\"${otProps.getProperty("owntracks.password", "")}\"")
+    buildConfigField("String", "OT_DEFAULT_DEVICE_ID", "\"${otProps.getProperty("owntracks.deviceId", "")}\"")
+    buildConfigField("String", "OT_DEFAULT_TID", "\"${otProps.getProperty("owntracks.tid", "")}\"")
+    buildConfigField("String", "OT_DEBUG_URL", "\"${otProps.getProperty("owntracks.debugUrl", "")}\"")
+    buildConfigField(
+        "int",
+        "OT_DEFAULT_MODE",
+        if (otProps.getProperty("owntracks.mode", "HTTP") == "HTTP") "3" else "0",
     )
 
     testInstrumentationRunner = "org.owntracks.android.testutils.hilt.CustomTestRunner"

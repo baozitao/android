@@ -1,0 +1,9 @@
+# OwnTracks 连接配置模板
+# 复制此文件为 owntracks.properties 并填写实际值
+owntracks.mode=HTTP
+owntracks.url=https://your-server/pub
+owntracks.username=your-username
+owntracks.password=your-password
+owntracks.deviceId=device1
+owntracks.tid=d1
+owntracks.debugUrl=https://your-debug-server/api/log

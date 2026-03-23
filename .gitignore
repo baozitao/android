@@ -65,3 +65,6 @@ project/localscripts
 jacoco.exec
 .env
 fastlane/report.xml
+
+# 私有配置（含密码，不提交）
+project/owntracks.properties

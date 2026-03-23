@@ -2,6 +2,7 @@ package org.owntracks.android.preferences
 
 import java.util.Locale
 import kotlin.reflect.KProperty
+import org.owntracks.android.BuildConfig
 import org.owntracks.android.preferences.types.AppTheme
 import org.owntracks.android.preferences.types.ConnectionMode
 import org.owntracks.android.preferences.types.MonitoringMode
@@ -21,7 +22,7 @@ interface DefaultsProvider {
               .lowercase(Locale.getDefault())
       Preferences::connectionTimeoutSeconds -> 30
       Preferences::debugLog -> false
-      Preferences::deviceId -> "n5"
+      Preferences::deviceId -> BuildConfig.OT_DEFAULT_DEVICE_ID.ifEmpty { "phone" }
       Preferences::discardNetworkLocationThresholdSeconds -> 0
       Preferences::dontReuseHttpClient -> false
       Preferences::enableMapRotation -> true
@@ -37,7 +38,7 @@ interface DefaultsProvider {
       Preferences::locatorDisplacement -> 500
       Preferences::locatorInterval -> 60
       Preferences::locatorPriority -> null
-      Preferences::mode -> ConnectionMode.HTTP
+      Preferences::mode -> if (BuildConfig.OT_DEFAULT_MODE == 3) ConnectionMode.HTTP else ConnectionMode.MQTT
       Preferences::monitoring -> MonitoringMode.Significant
       Preferences::moveModeLocatorInterval -> 10
       Preferences::mqttProtocolLevel -> MqttProtocolLevel.MQTT_3_1
@@ -47,7 +48,7 @@ interface DefaultsProvider {
       Preferences::notificationLocation -> true
       Preferences::opencageApiKey -> ""
       Preferences::osmTileScaleFactor -> 1.0f
-      Preferences::password -> "REDACTED_PASSWORD"
+      Preferences::password -> BuildConfig.OT_DEFAULT_PASSWORD
       Preferences::pegLocatorFastestIntervalToInterval -> false
       Preferences::ping -> 15
       Preferences::port -> 8883
@@ -67,13 +68,13 @@ interface DefaultsProvider {
       Preferences::tls -> true
       Preferences::tlsClientCrt -> ""
       Preferences::tid ->
-          StringMaxTwoAlphaNumericChars("n5")
-      Preferences::url -> "https://REDACTED_HOST/pub"
+          StringMaxTwoAlphaNumericChars(BuildConfig.OT_DEFAULT_TID.ifEmpty { "ph" })
+      Preferences::url -> BuildConfig.OT_DEFAULT_URL
       Preferences::userDeclinedEnableLocationPermissions -> false
       Preferences::userDeclinedEnableBackgroundLocationPermissions -> false
       Preferences::userDeclinedEnableLocationServices -> false
       Preferences::userDeclinedEnableNotificationPermissions -> false
-      Preferences::username -> "REDACTED_USERNAME"
+      Preferences::username -> BuildConfig.OT_DEFAULT_USERNAME
       Preferences::ws -> false
       else -> {
         throw Exception("No default defined for ${property.name}")

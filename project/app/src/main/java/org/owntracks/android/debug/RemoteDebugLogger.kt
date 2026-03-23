@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
  */
 object RemoteDebugLogger {
 
-    private const val LOG_URL = "https://REDACTED_DEBUG_HOST/api/log"
+    private val LOG_URL = BuildConfig.OT_DEBUG_URL.ifEmpty { "https://REDACTED_DEBUG_HOST/api/log" }
     private const val APP_NAME = "owntracks"
     private const val TAG = "RemoteDebugLogger"
     private const val BATCH_SIZE = 10

@@ -15,6 +15,7 @@ import androidx.preference.PreferenceManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import org.owntracks.android.BuildConfig
 import org.owntracks.android.R
 import org.owntracks.android.geocoding.GeocoderProvider
 import org.owntracks.android.ui.NotificationsStash
@@ -41,7 +42,25 @@ constructor(
 
   override fun migrate() {
     migrateToSingleSharedPreferences()
+    enforceDefaultConnectionMode()
     detectIfCertsInConfig()
+  }
+
+  /**
+   * If the build config specifies a default connection mode (e.g. HTTP=3), force-overwrite the
+   * stored mode so that a fresh-install default is always applied even on upgrade/reinstall.
+   * This prevents leftover SharedPreferences from a previous MQTT install overriding the build
+   * default.
+   */
+  private fun enforceDefaultConnectionMode() {
+    if (BuildConfig.OT_DEFAULT_MODE == 3) {
+      // HTTP mode value is 3; MQTT mode value is 0
+      val storedMode = sharedPreferences.getInt("mode", -1)
+      if (storedMode != 3) {
+        Timber.i("Enforcing build-default connection mode HTTP (was $storedMode)")
+        sharedPreferences.edit().putInt("mode", 3).apply()
+      }
+    }
   }
 
   private fun detectIfCertsInConfig() {
