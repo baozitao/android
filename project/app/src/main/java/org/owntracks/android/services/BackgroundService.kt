@@ -136,41 +136,46 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
     // 只在 Adaptive 模式下工作
     if (preferences.monitoring != MonitoringMode.Adaptive) return
 
-    // 1. accuracy 过滤：精度 >50m 的不参与计算
-    if (location.accuracy > 50f) return
+    // 1. accuracy 过滤：精度 >50m 的不参与速度/距离计算，但仍触发上报（视为静止）
+    val lowAccuracy = location.accuracy > 50f
+    if (lowAccuracy) {
+      // 低精度定位（基站等）：不参与速度计算，直接当静止处理
+      addSpeedSample(0f)
+      Timber.d("ADAPTIVE: low accuracy (${location.accuracy}m), treating as idle")
+    } else {
+      // 2. 计算与上一个有效位置的距离
+      val prevLocation = locationHistory.lastOrNull()
+      if (prevLocation != null) {
+        val distance = location.distanceTo(prevLocation)
 
-    // 2. 计算与上一个有效位置的距离
-    val prevLocation = locationHistory.lastOrNull()
-    if (prevLocation != null) {
-      val distance = location.distanceTo(prevLocation)
-
-      // 3. 位移 <50m 视为静止（GPS漂移范围）
-      if (distance < 50f) {
-        // 当作速度 0 处理
-        addSpeedSample(0f)
-      } else {
-        // 用实际速度（优先 GPS 速度，其次计算速度）
-        val speed = if (location.hasSpeed() && location.speed > 0) {
-          location.speed
+        // 3. 位移 <50m 视为静止（GPS漂移范围）
+        if (distance < 50f) {
+          // 当作速度 0 处理
+          addSpeedSample(0f)
         } else {
-          val timeDiff = (location.time - prevLocation.time) / 1000f
-          if (timeDiff > 0) distance / timeDiff else 0f
-        }
+          // 用实际速度（优先 GPS 速度，其次计算速度）
+          val speed = if (location.hasSpeed() && location.speed > 0) {
+            location.speed
+          } else {
+            val timeDiff = (location.time - prevLocation.time) / 1000f
+            if (timeDiff > 0) distance / timeDiff else 0f
+          }
 
-        // 4. 异常值过滤：突然从 0 跳到 >100km/h 不合理
-        val avgSpeed = getAverageSpeed()
-        if (avgSpeed < 1f && speed > 27.8f) { // 0→100km/h 的跳变
-          // 忽略这个异常值
-          return
-        }
+          // 4. 异常值过滤：突然从 0 跳到 >100km/h 不合理
+          val avgSpeed = getAverageSpeed()
+          if (avgSpeed < 1f && speed > 27.8f) { // 0→100km/h 的跳变
+            // 忽略这个异常值
+            return
+          }
 
-        addSpeedSample(speed)
+          addSpeedSample(speed)
+        }
       }
-    }
 
-    // 保存有效位置
-    locationHistory.add(location)
-    if (locationHistory.size > 10) locationHistory.removeAt(0)
+      // 保存有效位置（仅高精度位置参与历史记录）
+      locationHistory.add(location)
+      if (locationHistory.size > 10) locationHistory.removeAt(0)
+    }
 
     // 5. 用滑动窗口平均速度决定间隔
     val avgSpeed = getAverageSpeed()
