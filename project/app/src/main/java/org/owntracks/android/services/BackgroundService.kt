@@ -391,18 +391,11 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
     ))
     Timber.d("ADAPTIVE: updating location request with interval=${intervalSeconds}s, actual=${actualInterval}s, maxWait=${maxWaitTime}ms, params=$request")
 
-    // 先移除旧的位置监听，再重新注册
-    try {
-      locationProviderClient.removeLocationUpdates(
-          callbackForReportType[MessageLocation.ReportType.DEFAULT]!!.value)
-      Timber.tag("OT-DEBUG").d("LOCATION_UPDATES_REMOVED: success=true")
-      RemoteDebugLogger.log("LOCATION_UPDATES_REMOVED", "Removed old location updates before re-register", mapOf("success" to "true"))
-    } catch (e: Exception) {
-      Timber.tag("OT-DEBUG").e(e, "LOCATION_UPDATES_REMOVED: success=false, error=${e.message}")
-      RemoteDebugLogger.logWarn("LOCATION_UPDATES_REMOVED", "Failed to remove old location updates: ${e.message}", mapOf("success" to "false", "error" to (e.message ?: "unknown")))
-    }
-
-    locationProviderClient.flushLocations()
+    // requestLocationUpdates in the base class already calls removeLocationUpdates internally,
+    // so we do NOT manually remove here — doing so caused the callback to be unregistered from
+    // the WeakHashMap before the base class's own remove ran, resulting in the base class seeing
+    // "No current location updates found" and the LocationManager listener potentially being left
+    // in an inconsistent state.
     locationProviderClient.requestLocationUpdates(
         request,
         callbackForReportType[MessageLocation.ReportType.DEFAULT]!!.value,
