@@ -26,7 +26,7 @@ if (otPropsFile.exists()) {
 
 val gmsImplementation: Configuration by configurations.creating
 
-val versionNameValue = "oss2.1.8"
+val versionNameValue = "oss2.1.9"
 
 fun generateVersionCode(versionName: String): Int {
   // Strip non-numeric prefix (e.g. "oss", "gms") before parsing version parts

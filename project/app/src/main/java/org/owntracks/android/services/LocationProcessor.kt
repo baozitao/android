@@ -4,6 +4,7 @@ import android.location.Location
 import android.os.Build
 import java.time.Instant
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Named
 import javax.inject.Singleton
@@ -51,6 +52,59 @@ constructor(
     @Named("mockLocationIdlingResource")
     private val mockLocationIdlingResource: SimpleIdlingResource
 ) {
+  // Throttle: track the last time a location was actually reported (ms since epoch)
+  private val lastReportTimeMs = AtomicLong(0L)
+
+  // Throttle: track the last reported location for distance calculation
+  @Volatile private var lastReportedLocation: Location? = null
+
+  /**
+   * Determines whether a location update should be reported based on throttle rules:
+   * - USER / RESPONSE / CIRCULAR triggers are always sent immediately
+   * - Stationary (speed < 1 km/h):  min interval 5 minutes
+   * - Low-speed   (1–15 km/h):      min interval 2 minutes
+   * - High-speed  (> 15 km/h):      min interval 30 seconds
+   * - Distance moved > 50 m:        always send regardless of time
+   */
+  private fun shouldThrottleLocation(
+      location: Location,
+      trigger: MessageLocation.ReportType
+  ): Boolean {
+    // Never throttle manual / response / geofence triggers
+    if (trigger == MessageLocation.ReportType.USER ||
+        trigger == MessageLocation.ReportType.RESPONSE ||
+        trigger == MessageLocation.ReportType.CIRCULAR) {
+      return false
+    }
+
+    val nowMs = System.currentTimeMillis()
+    val elapsedMs = nowMs - lastReportTimeMs.get()
+
+    // Distance check: if moved > 50 m since last report, always send
+    lastReportedLocation?.let { last ->
+      if (location.distanceTo(last) > 50f) {
+        Timber.d("Throttle: distance > 50m, bypassing time check")
+        return false
+      }
+    }
+
+    // Speed-based minimum interval (m/s from Location, convert to km/h)
+    val speedKmh = if (location.hasSpeed()) location.speed * 3.6f else 0f
+    val minIntervalMs: Long = when {
+      speedKmh > 15f -> 30_000L        // high speed  → 30 s
+      speedKmh >= 1f -> 120_000L       // low speed   → 2 min
+      else            -> 300_000L      // stationary  → 5 min
+    }
+
+    if (elapsedMs < minIntervalMs) {
+      Timber.d(
+          "Throttle: suppressing location (speed=%.1f km/h, elapsed=%ds, minInterval=%ds)".format(
+              speedKmh, elapsedMs / 1000, minIntervalMs / 1000))
+      return true
+    }
+    return false
+  }
+
   private fun locationIsWithAccuracyThreshold(l: Location): Boolean =
       preferences.ignoreInaccurateLocations
           .run { preferences.ignoreInaccurateLocations == 0 || l.accuracy < this }
@@ -123,6 +177,11 @@ constructor(
       return Result.failure(Exception("message suppressed by monitoring settings: manual"))
     }
 
+    // Throttle check: skip report if interval/distance conditions are not met
+    if (shouldThrottleLocation(location, trigger)) {
+      return Result.failure(Exception("location report throttled by rate limiter"))
+    }
+
     val message =
         if (preferences.extendedData) {
               fromLocationAndWifiInfo(location, wifiInfoProvider).apply {
@@ -142,6 +201,9 @@ constructor(
             }
     Timber.v("Actually publishing location $location triggered by $trigger as message=$message")
     messageProcessor.queueMessageForSending(message)
+    // Update throttle state after successful enqueue
+    lastReportTimeMs.set(System.currentTimeMillis())
+    lastReportedLocation = location
     if (responseMessageTypes.contains(trigger)) {
       publishResponseMessageIdlingResource.setIdleState(true)
     }
