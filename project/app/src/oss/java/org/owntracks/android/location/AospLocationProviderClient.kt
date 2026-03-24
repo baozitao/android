@@ -79,17 +79,36 @@ class AospLocationProviderClient(val context: Context) : LocationProviderClient(
         clientCallBack.onLocationResult(LocationResult(location))
       }
       callbacks[clientCallBack] = listener
-      locationSourcesForPriority(locationRequest.priority)
+      val sources = locationSourcesForPriority(locationRequest.priority)
+      RemoteDebugLogger.log("LOCATION_REGISTER", "Registering location updates", mapOf(
+          "sources" to sources.joinToString(","),
+          "interval_ms" to locationRequest.interval.toMillis().toString(),
+          "displacement_m" to (locationRequest.smallestDisplacement ?: 10f).toString(),
+          "priority" to locationRequest.priority.name,
+          "callback" to clientCallBack.toString()
+      ))
+      sources
           .apply {
             Timber.v("Requested location updates for sources $this to callback $clientCallBack")
           }
           .forEach {
-            requestLocationUpdates(
-                it.name.lowercase(),
-                locationRequest.interval.toMillis(),
-                locationRequest.smallestDisplacement ?: 10f,
-                listener,
-                looper)
+            try {
+              requestLocationUpdates(
+                  it.name.lowercase(),
+                  locationRequest.interval.toMillis(),
+                  locationRequest.smallestDisplacement ?: 10f,
+                  listener,
+                  looper)
+              RemoteDebugLogger.log("LOCATION_REGISTER_OK", "Registered ${it.name.lowercase()} provider", mapOf(
+                  "provider" to it.name.lowercase(),
+                  "interval_ms" to locationRequest.interval.toMillis().toString()
+              ))
+            } catch (e: Exception) {
+              RemoteDebugLogger.logError("LOCATION_REGISTER_FAIL", "Failed to register ${it.name.lowercase()}: ${e.message}", mapOf(
+                  "provider" to it.name.lowercase(),
+                  "error" to (e.message ?: e.javaClass.simpleName)
+              ))
+            }
           }
     }
   }
@@ -99,7 +118,11 @@ class AospLocationProviderClient(val context: Context) : LocationProviderClient(
     callbacks.getOrDefault(clientCallBack, null)?.apply {
       locationManager?.removeUpdates(this)
       callbacks.remove(clientCallBack)
-    } ?: run { Timber.w("No current location updates found for $clientCallBack") }
+      RemoteDebugLogger.log("LOCATION_UNREGISTER", "Removed location updates", mapOf("callback" to clientCallBack.toString(), "success" to "true"))
+    } ?: run {
+      Timber.w("No current location updates found for $clientCallBack")
+      RemoteDebugLogger.logWarn("LOCATION_UNREGISTER", "No listener found for callback", mapOf("callback" to clientCallBack.toString(), "success" to "false"))
+    }
   }
 
   override fun flushLocations() {
