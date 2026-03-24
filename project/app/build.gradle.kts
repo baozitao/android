@@ -26,14 +26,17 @@ if (otPropsFile.exists()) {
 
 val gmsImplementation: Configuration by configurations.creating
 
-val versionNameValue = "debug2.1.4"
+val versionNameValue = "oss2.1.8"
 
 fun generateVersionCode(versionName: String): Int {
-  val parts = versionName.split(".")
+  // Strip non-numeric prefix (e.g. "oss", "gms") before parsing version parts
+  val cleaned = versionName.trimStart { !it.isDigit() }
+  val parts = cleaned.split(".")
   val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
   val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
   val patch = parts.getOrNull(2)?.toIntOrNull() ?: 0
-  return 400000000 + major * 10000000 + minor * 100000 + patch * 1000
+  // Use 430000000 as base to ensure oss builds always exceed legacy gms versionCodes (420xxxxxx)
+  return 430000000 + major * 10000000 + minor * 100000 + patch * 1000
 }
 
 val generatedVersionCode = generateVersionCode(versionNameValue)

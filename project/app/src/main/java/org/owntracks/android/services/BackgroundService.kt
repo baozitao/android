@@ -37,6 +37,8 @@ import dagger.hilt.EntryPoints
 import dagger.hilt.InstallIn
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.components.SingletonComponent
+import android.os.Handler
+import android.os.HandlerThread
 import java.time.Duration
 import java.util.concurrent.TimeUnit
 import java.util.stream.Collectors
@@ -132,6 +134,129 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
   private var slowSpeedCount: Int = 0
   private var lastIntervalSwitchTime: Long = 0L
 
+  // 兜底定时器 - 每60秒主动检查位置
+  private val fallbackHandlerThread = HandlerThread("FallbackLocationThread")
+  private lateinit var fallbackHandler: Handler
+  private val FALLBACK_INTERVAL_MS = 60_000L   // 60秒轮询一次
+  private val STALE_THRESHOLD_MS = 5 * 60_000L // 缓存位置超过5分钟认为太旧
+
+  /**
+   * 启动兜底定位定时器。
+   * 每 60 秒检查一次系统缓存位置：
+   *   - 若缓存位置比上次 callback 更新，则走正常发布流程
+   *   - 若缓存位置超过 5 分钟未更新，触发一次主动高精度定位请求
+   */
+  private fun startFallbackLocationTimer() {
+    if (!fallbackHandlerThread.isAlive) {
+      fallbackHandlerThread.start()
+    }
+    fallbackHandler = Handler(fallbackHandlerThread.looper)
+    scheduleFallbackCheck()
+    Timber.tag("OT-DEBUG").d("FALLBACK_TIMER: started, interval=${FALLBACK_INTERVAL_MS}ms")
+    RemoteDebugLogger.log("FALLBACK_TIMER", "Fallback location timer started", mapOf(
+        "interval_ms" to FALLBACK_INTERVAL_MS.toString(),
+        "stale_threshold_ms" to STALE_THRESHOLD_MS.toString()
+    ))
+  }
+
+  private fun scheduleFallbackCheck() {
+    fallbackHandler.postDelayed(fallbackLocationRunnable, FALLBACK_INTERVAL_MS)
+  }
+
+  private val fallbackLocationRunnable = object : Runnable {
+    override fun run() {
+      runFallbackLocationCheck()
+      scheduleFallbackCheck()
+    }
+  }
+
+  private fun runFallbackLocationCheck() {
+    if (!requirementsChecker.hasLocationPermissions()) {
+      Timber.tag("OT-DEBUG").d("FALLBACK_CHECK: skip - no location permission")
+      return
+    }
+
+    val now = System.currentTimeMillis()
+    val lastCbTime = lastLocationReceivedTime
+    val timeSinceLastCb = if (lastCbTime > 0) now - lastCbTime else Long.MAX_VALUE
+
+    Timber.tag("OT-DEBUG").d("FALLBACK_CHECK: timeSinceLastCb=${timeSinceLastCb}ms, staleThreshold=${STALE_THRESHOLD_MS}ms")
+    RemoteDebugLogger.log("FALLBACK_CHECK", "Fallback check triggered", mapOf(
+        "time_since_last_cb_ms" to timeSinceLastCb.toString(),
+        "stale_threshold_ms" to STALE_THRESHOLD_MS.toString(),
+        "last_cb_time" to lastCbTime.toString()
+    ))
+
+    val cachedLocation = locationProviderClient.getLastLocation()
+    if (cachedLocation != null) {
+      val locationAge = now - cachedLocation.time
+      Timber.tag("OT-DEBUG").d("FALLBACK_CHECK: cached location age=${locationAge}ms, " +
+          "lat=${String.format("%.6f", cachedLocation.latitude)}, lon=${String.format("%.6f", cachedLocation.longitude)}, " +
+          "acc=${cachedLocation.accuracy}m")
+      RemoteDebugLogger.log("FALLBACK_CHECK", "Got cached location", mapOf(
+          "location_age_ms" to locationAge.toString(),
+          "lat" to String.format("%.6f", cachedLocation.latitude),
+          "lon" to String.format("%.6f", cachedLocation.longitude),
+          "acc" to String.format("%.1f", cachedLocation.accuracy),
+          "provider" to (cachedLocation.provider ?: "unknown")
+      ))
+
+      if (cachedLocation.time > lastCbTime) {
+        // 缓存位置比上次 callback 更新，走正常发布流程
+        Timber.tag("OT-DEBUG").d("FALLBACK_CHECK: cached location is newer than last callback, publishing")
+        RemoteDebugLogger.log("FALLBACK_CHECK", "Publishing newer cached location", mapOf(
+            "cached_time" to cachedLocation.time.toString(),
+            "last_cb_time" to lastCbTime.toString(),
+            "diff_ms" to (cachedLocation.time - lastCbTime).toString()
+        ))
+        lastLocationReceivedTime = cachedLocation.time
+        lifecycleScope.launch {
+          locationProcessor.onLocationChanged(cachedLocation, MessageLocation.ReportType.DEFAULT)
+        }
+      } else {
+        Timber.tag("OT-DEBUG").d("FALLBACK_CHECK: cached location is NOT newer than last callback, skip publish")
+      }
+
+      // 若缓存位置超过5分钟，触发主动定位
+      if (locationAge > STALE_THRESHOLD_MS) {
+        Timber.tag("OT-DEBUG").d("FALLBACK_CHECK: cached location stale (${locationAge}ms > ${STALE_THRESHOLD_MS}ms), triggering active fix")
+        RemoteDebugLogger.logWarn("FALLBACK_CHECK", "Cached location stale, requesting active high-accuracy fix", mapOf(
+            "location_age_ms" to locationAge.toString(),
+            "stale_threshold_ms" to STALE_THRESHOLD_MS.toString()
+        ))
+        locationProviderClient.singleHighAccuracyLocation(
+            callbackForReportType[MessageLocation.ReportType.DEFAULT]!!.value,
+            runThingsOnOtherThreads.getBackgroundLooper())
+      }
+    } else {
+      // 没有任何缓存位置，如果距上次 callback 已超过 5 分钟，主动触发
+      Timber.tag("OT-DEBUG").d("FALLBACK_CHECK: no cached location available")
+      RemoteDebugLogger.log("FALLBACK_CHECK", "No cached location available", mapOf(
+          "time_since_last_cb_ms" to timeSinceLastCb.toString()
+      ))
+      if (timeSinceLastCb > STALE_THRESHOLD_MS) {
+        Timber.tag("OT-DEBUG").d("FALLBACK_CHECK: no cached location and callbacks stale, triggering active fix")
+        RemoteDebugLogger.logWarn("FALLBACK_CHECK", "No cached location and stale callbacks, requesting active fix", mapOf(
+            "time_since_last_cb_ms" to timeSinceLastCb.toString()
+        ))
+        locationProviderClient.singleHighAccuracyLocation(
+            callbackForReportType[MessageLocation.ReportType.DEFAULT]!!.value,
+            runThingsOnOtherThreads.getBackgroundLooper())
+      }
+    }
+  }
+
+  private fun stopFallbackLocationTimer() {
+    if (::fallbackHandler.isInitialized) {
+      fallbackHandler.removeCallbacks(fallbackLocationRunnable)
+    }
+    if (fallbackHandlerThread.isAlive) {
+      fallbackHandlerThread.quitSafely()
+    }
+    Timber.tag("OT-DEBUG").d("FALLBACK_TIMER: stopped")
+    RemoteDebugLogger.log("FALLBACK_TIMER", "Fallback location timer stopped")
+  }
+
   private fun onLocationReceivedForAdaptiveInterval(location: Location) {
     // 只在 Adaptive 模式下工作
     if (preferences.monitoring != MonitoringMode.Adaptive) return
@@ -156,23 +281,23 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
         "altitude" to if (location.hasAltitude()) String.format("%.1f", location.altitude) else "N/A"
     ))
 
-    // 1. accuracy 过滤：精度 >50m 的不参与速度/距离计算，但仍触发上报（视为静止）
-    val lowAccuracy = location.accuracy > 50f
+    // 1. accuracy 过滤：精度 >200m 的不参与速度/距离计算，但仍触发上报（视为静止）
+    val lowAccuracy = location.accuracy > 200f
     if (lowAccuracy) {
       // 低精度定位（基站等）：不参与速度计算，直接当静止处理
-      Timber.tag("OT-DEBUG").d("ACCURACY_FILTER: acc=${location.accuracy}m, threshold=50m, action=skip_speed (treating as idle)")
+      Timber.tag("OT-DEBUG").d("ACCURACY_FILTER: acc=${location.accuracy}m, threshold=200m, action=skip_speed (treating as idle)")
       RemoteDebugLogger.log("ACCURACY_FILTER", "Low accuracy location, treating as idle", mapOf(
           "acc" to String.format("%.1f", location.accuracy),
-          "threshold" to "50",
+          "threshold" to "200",
           "action" to "skip_speed"
       ))
       addSpeedSample(0f)
       Timber.d("ADAPTIVE: low accuracy (${location.accuracy}m), treating as idle")
     } else {
-      Timber.tag("OT-DEBUG").d("ACCURACY_FILTER: acc=${location.accuracy}m, threshold=50m, action=normal (proceeding)")
+      Timber.tag("OT-DEBUG").d("ACCURACY_FILTER: acc=${location.accuracy}m, threshold=200m, action=normal (proceeding)")
       RemoteDebugLogger.log("ACCURACY_FILTER", "Good accuracy, proceeding with speed/distance calc", mapOf(
           "acc" to String.format("%.1f", location.accuracy),
-          "threshold" to "50",
+          "threshold" to "200",
           "action" to "normal"
       ))
 
@@ -545,6 +670,9 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
     // Start service watchdog
     ServiceWatchdogReceiver.scheduleNext(this)
     Timber.tag("OT-DEBUG").d("BackgroundService.onCreate - watchdog scheduled")
+
+    // Start fallback location timer (兜底定位，每60秒检查一次)
+    startFallbackLocationTimer()
   }
 
   override fun onDestroy() {
@@ -554,6 +682,7 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
     stopForeground(STOP_FOREGROUND_REMOVE)
     unregisterReceiver(powerBroadcastReceiver)
     significantMotionSensor.cancel()
+    stopFallbackLocationTimer()
     preferences.unregisterOnPreferenceChangedListener(this)
     messageProcessor.stopSendingMessages()
     super.onDestroy()
