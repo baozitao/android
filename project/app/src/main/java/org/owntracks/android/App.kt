@@ -107,6 +107,7 @@ open class BaseApp :
 
   override fun onCreate() {
     Timber.tag("OT-DEBUG").d("App.onCreate started")
+    RemoteDebugLogger.init(this)
     RemoteDebugLogger.log("APP_START", "App.onCreate started")
     // Make sure we use Conscrypt for advanced TLS features on all devices.
     Security.insertProviderAt(Conscrypt.newProviderBuilder().provideTrustManager(true).build(), 1)

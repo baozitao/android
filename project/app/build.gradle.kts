@@ -26,7 +26,7 @@ if (otPropsFile.exists()) {
 
 val gmsImplementation: Configuration by configurations.creating
 
-val versionNameValue = "debug2.1.1"
+val versionNameValue = "debug2.1.2"
 
 fun generateVersionCode(versionName: String): Int {
   val parts = versionName.split(".")
