@@ -29,6 +29,22 @@ class ServiceWatchdogReceiver : BroadcastReceiver() {
         } else {
             Timber.tag("OT-DEBUG").d("ServiceWatchdog: service is alive")
             RemoteDebugLogger.log("WATCHDOG_OK", "Service alive check passed")
+
+            // 检查最后位置回调时间，超过 10 分钟没有回调则强制重新注册
+            val lastLocationTime = BackgroundService.lastLocationReceivedTime
+            val now = System.currentTimeMillis()
+            if (lastLocationTime > 0 && (now - lastLocationTime) > 10 * 60 * 1000) {
+                val staleMins = (now - lastLocationTime) / 60000
+                Timber.tag("OT-DEBUG").w("Watchdog: no location callback for ${staleMins} minutes, forcing re-register")
+                RemoteDebugLogger.logWarn("WATCHDOG_LOCATION_STALE", "No location callback for ${staleMins} minutes, forcing re-register")
+                try {
+                    val reregisterIntent = Intent(context, BackgroundService::class.java)
+                    reregisterIntent.action = BackgroundService.INTENT_ACTION_FORCE_LOCATION_REREGISTER
+                    context.startForegroundService(reregisterIntent)
+                } catch (e: Exception) {
+                    Timber.tag("OT-DEBUG").e(e, "ServiceWatchdog: failed to send FORCE_LOCATION_REREGISTER intent")
+                }
+            }
         }
 
         // 调度下一次检查（5分钟后）

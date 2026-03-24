@@ -239,6 +239,9 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
   /**
    * Sets up location request with a specific interval override (used by adaptive logic).
    * Only replaces the interval; all other params come from preferences.
+   *
+   * For idle intervals (>= 300s), we use a 60s actual interval with maxWaitTime=interval to
+   * prevent Android from batching GPS callbacks for 17+ minutes.
    */
   private fun setupLocationRequestWithInterval(intervalSeconds: Long): Result<Unit> {
     if (!requirementsChecker.hasLocationPermissions()) {
@@ -246,13 +249,35 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
     }
     val smallestDisplacement = preferences.locatorDisplacement.toFloat()
     val priority = preferences.locatorPriority ?: LocatorPriority.BalancedPowerAccuracy
-    val interval = Duration.ofSeconds(intervalSeconds)
+
+    // 静止档（>=300s）：用 60s interval + maxWaitTime，避免 Android 批处理延迟超 5 分钟
+    val actualInterval = if (intervalSeconds >= 300L) 60L else intervalSeconds
+    val maxWaitTime = if (intervalSeconds >= 300L) intervalSeconds * 1000L else 0L
+
+    val interval = Duration.ofSeconds(actualInterval)
     val fastestInterval =
         if (preferences.pegLocatorFastestIntervalToInterval) interval
         else Duration.ofSeconds(1)
+    val maxWaitDuration = if (maxWaitTime > 0) Duration.ofMillis(maxWaitTime) else null
     val request =
-        LocationRequest(fastestInterval, smallestDisplacement, null, null, priority, interval, null)
-    Timber.d("ADAPTIVE: updating location request with interval=${intervalSeconds}s, params=$request")
+        LocationRequest(fastestInterval, smallestDisplacement, null, null, priority, interval, null, maxWaitDuration)
+
+    RemoteDebugLogger.log("LOCATION_REQUEST_UPDATE", "Re-registering location updates", mapOf(
+        "requested_interval" to intervalSeconds.toString(),
+        "actual_interval" to actualInterval.toString(),
+        "max_wait_time" to maxWaitTime.toString(),
+        "priority" to priority.toString()
+    ))
+    Timber.d("ADAPTIVE: updating location request with interval=${intervalSeconds}s, actual=${actualInterval}s, maxWait=${maxWaitTime}ms, params=$request")
+
+    // 先移除旧的位置监听，再重新注册
+    try {
+      locationProviderClient.removeLocationUpdates(
+          callbackForReportType[MessageLocation.ReportType.DEFAULT]!!.value)
+    } catch (e: Exception) {
+      Timber.tag("OT-DEBUG").e(e, "Failed to remove old location updates before re-register")
+    }
+
     locationProviderClient.flushLocations()
     locationProviderClient.requestLocationUpdates(
         request,
@@ -491,6 +516,12 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
         }
         INTENT_ACTION_EXIT -> {
           exit()
+          return
+        }
+        INTENT_ACTION_FORCE_LOCATION_REREGISTER -> {
+          Timber.tag("OT-DEBUG").w("BackgroundService: received FORCE_LOCATION_REREGISTER, re-setting up location request")
+          RemoteDebugLogger.logWarn("FORCE_REREGISTER", "Forced location re-registration triggered by watchdog")
+          setupLocationRequest()
           return
         }
         else -> {}
@@ -887,6 +918,11 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
 
     // NEW ACTIONS ALSO HAVE TO BE ADDED TO THE SERVICE INTENT FILTER
     const val INTENT_ACTION_SEND_LOCATION_USER = "org.owntracks.android.SEND_LOCATION_USER"
+    const val INTENT_ACTION_FORCE_LOCATION_REREGISTER = "org.owntracks.android.FORCE_LOCATION_REREGISTER"
+
+    /** Updated every time a location callback fires; used by watchdog to detect stale GPS. */
+    @Volatile
+    var lastLocationReceivedTime: Long = 0L
     const val INTENT_ACTION_SEND_EVENT_CIRCULAR = "org.owntracks.android.SEND_EVENT_CIRCULAR"
     private const val INTENT_ACTION_CLEAR_NOTIFICATIONS =
         "org.owntracks.android.CLEAR_EVENT_NOTIFICATIONS"
@@ -915,6 +951,8 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
       val loc = locationResult.lastLocation
       Timber.tag("OT-DEBUG").d("Location received: lat=${loc.latitude}, lon=${loc.longitude}, acc=${loc.accuracy}, provider=${loc.provider}, speed=${if (loc.hasSpeed()) loc.speed else -1f}")
       RemoteDebugLogger.log("LOCATION_RECEIVED", "Location received", mapOf("lat" to loc.latitude.toString(), "lon" to loc.longitude.toString(), "acc" to loc.accuracy.toString(), "provider" to (loc.provider ?: "unknown"), "speed_ms" to if (loc.hasSpeed()) String.format("%.2f", loc.speed) else "N/A"))
+      // Update watchdog timestamp on every location callback
+      lastLocationReceivedTime = System.currentTimeMillis()
       // Notify adaptive interval logic (only for DEFAULT report type)
       adaptiveIntervalCallback?.invoke(loc)
       onLocationChanged(loc, reportType)
