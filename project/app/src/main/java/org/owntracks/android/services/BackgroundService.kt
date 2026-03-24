@@ -136,40 +136,118 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
     // 只在 Adaptive 模式下工作
     if (preferences.monitoring != MonitoringMode.Adaptive) return
 
+    // 完整位置信息日志
+    val hasSpd = location.hasSpeed()
+    val speedMs = if (hasSpd) location.speed else -1f
+    Timber.tag("OT-DEBUG").d(
+        "LOCATION_DETAIL: lat=${String.format("%.6f", location.latitude)}, lon=${String.format("%.6f", location.longitude)}, " +
+        "acc=${location.accuracy}m, provider=${location.provider}, hasSpeed=$hasSpd, speed=${String.format("%.2f", speedMs)}m/s, time=${location.time}"
+    )
+    RemoteDebugLogger.log("LOCATION_DETAIL", "Location callback received", mapOf(
+        "lat" to String.format("%.6f", location.latitude),
+        "lon" to String.format("%.6f", location.longitude),
+        "acc" to String.format("%.1f", location.accuracy),
+        "provider" to (location.provider ?: "unknown"),
+        "has_speed" to hasSpd.toString(),
+        "speed_ms" to String.format("%.2f", speedMs),
+        "speed_kmh" to if (hasSpd) String.format("%.1f", speedMs * 3.6f) else "N/A",
+        "time" to location.time.toString(),
+        "bearing" to if (location.hasBearing()) String.format("%.1f", location.bearing) else "N/A",
+        "altitude" to if (location.hasAltitude()) String.format("%.1f", location.altitude) else "N/A"
+    ))
+
     // 1. accuracy 过滤：精度 >50m 的不参与速度/距离计算，但仍触发上报（视为静止）
     val lowAccuracy = location.accuracy > 50f
     if (lowAccuracy) {
       // 低精度定位（基站等）：不参与速度计算，直接当静止处理
+      Timber.tag("OT-DEBUG").d("ACCURACY_FILTER: acc=${location.accuracy}m, threshold=50m, action=skip_speed (treating as idle)")
+      RemoteDebugLogger.log("ACCURACY_FILTER", "Low accuracy location, treating as idle", mapOf(
+          "acc" to String.format("%.1f", location.accuracy),
+          "threshold" to "50",
+          "action" to "skip_speed"
+      ))
       addSpeedSample(0f)
       Timber.d("ADAPTIVE: low accuracy (${location.accuracy}m), treating as idle")
     } else {
+      Timber.tag("OT-DEBUG").d("ACCURACY_FILTER: acc=${location.accuracy}m, threshold=50m, action=normal (proceeding)")
+      RemoteDebugLogger.log("ACCURACY_FILTER", "Good accuracy, proceeding with speed/distance calc", mapOf(
+          "acc" to String.format("%.1f", location.accuracy),
+          "threshold" to "50",
+          "action" to "normal"
+      ))
+
       // 2. 计算与上一个有效位置的距离
       val prevLocation = locationHistory.lastOrNull()
       if (prevLocation != null) {
         val distance = location.distanceTo(prevLocation)
+        val timeDiffSec = (location.time - prevLocation.time) / 1000f
 
         // 3. 位移 <50m 视为静止（GPS漂移范围）
         if (distance < 50f) {
           // 当作速度 0 处理
+          Timber.tag("OT-DEBUG").d("DISTANCE_CALC: distance=${String.format("%.1f", distance)}m, threshold=50m, action=static (GPS drift range)")
+          RemoteDebugLogger.log("DISTANCE_CALC", "Small displacement, treating as static", mapOf(
+              "distance_m" to String.format("%.1f", distance),
+              "threshold_m" to "50",
+              "time_diff_s" to String.format("%.1f", timeDiffSec),
+              "action" to "static"
+          ))
           addSpeedSample(0f)
         } else {
           // 用实际速度（优先 GPS 速度，其次计算速度）
+          val calculatedSpeed = if (timeDiffSec > 0) distance / timeDiffSec else 0f
           val speed = if (location.hasSpeed() && location.speed > 0) {
             location.speed
           } else {
-            val timeDiff = (location.time - prevLocation.time) / 1000f
-            if (timeDiff > 0) distance / timeDiff else 0f
+            calculatedSpeed
           }
+          val speedSource = if (location.hasSpeed() && location.speed > 0) "gps" else "calculated"
+
+          Timber.tag("OT-DEBUG").d("DISTANCE_CALC: distance=${String.format("%.1f", distance)}m, threshold=50m, action=moving, speed=${String.format("%.2f", speed)}m/s (${speedSource})")
+          RemoteDebugLogger.log("DISTANCE_CALC", "Significant displacement, using speed", mapOf(
+              "distance_m" to String.format("%.1f", distance),
+              "threshold_m" to "50",
+              "time_diff_s" to String.format("%.1f", timeDiffSec),
+              "action" to "moving",
+              "speed_ms" to String.format("%.2f", speed),
+              "speed_kmh" to String.format("%.1f", speed * 3.6f),
+              "speed_source" to speedSource,
+              "gps_speed_ms" to if (location.hasSpeed()) String.format("%.2f", location.speed) else "N/A",
+              "calc_speed_ms" to String.format("%.2f", calculatedSpeed)
+          ))
 
           // 4. 异常值过滤：突然从 0 跳到 >100km/h 不合理
-          val avgSpeed = getAverageSpeed()
-          if (avgSpeed < 1f && speed > 27.8f) { // 0→100km/h 的跳变
+          val avgSpeedBefore = getAverageSpeed()
+          if (avgSpeedBefore < 1f && speed > 27.8f) { // 0→100km/h 的跳变
+            Timber.tag("OT-DEBUG").d("SPEED_SAMPLE: raw=${String.format("%.2f", speed)}m/s, REJECTED (anomaly: avg<1m/s but new>100km/h)")
+            RemoteDebugLogger.logWarn("SPEED_SAMPLE", "Anomaly rejected: 0→100km/h jump", mapOf(
+                "raw_speed_ms" to String.format("%.2f", speed),
+                "raw_speed_kmh" to String.format("%.1f", speed * 3.6f),
+                "avg_before_ms" to String.format("%.2f", avgSpeedBefore),
+                "history" to speedHistory.joinToString(",") { String.format("%.2f", it) },
+                "action" to "rejected_anomaly"
+            ))
             // 忽略这个异常值
             return
           }
 
+          // 速度样本日志（加入前）
+          val historyBefore = speedHistory.toList()
           addSpeedSample(speed)
+          val medianSpeed = getAverageSpeed()
+          Timber.tag("OT-DEBUG").d("SPEED_SAMPLE: raw=${String.format("%.2f", speed)}m/s, added=${String.format("%.2f", speed)}m/s, history=[${speedHistory.joinToString(",") { String.format("%.2f", it) }}], median=${String.format("%.2f", medianSpeed)}m/s")
+          RemoteDebugLogger.log("SPEED_SAMPLE", "Speed sample added", mapOf(
+              "raw_ms" to String.format("%.2f", speed),
+              "raw_kmh" to String.format("%.1f", speed * 3.6f),
+              "added_ms" to String.format("%.2f", speed),
+              "history_before" to historyBefore.joinToString(",") { String.format("%.2f", it) },
+              "history_after" to speedHistory.joinToString(",") { String.format("%.2f", it) },
+              "median_ms" to String.format("%.2f", medianSpeed),
+              "median_kmh" to String.format("%.1f", medianSpeed * 3.6f)
+          ))
         }
+      } else {
+        Timber.tag("OT-DEBUG").d("DISTANCE_CALC: no previous location yet, skipping distance calc")
       }
 
       // 保存有效位置（仅高精度位置参与历史记录）
@@ -183,17 +261,44 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
 
     // 6. 切换逻辑（快切慢需要稳定，慢切快立即响应）
     val now = System.currentTimeMillis()
-    if (now - lastIntervalSwitchTime < 10_000) return // 10秒防抖
+    val timeSinceLastSwitch = now - lastIntervalSwitchTime
+    if (timeSinceLastSwitch < 10_000) {
+      Timber.tag("OT-DEBUG").d("ADAPTIVE_DECISION: debounce active, ${timeSinceLastSwitch}ms since last switch (threshold=10000ms), skipping")
+      return
+    }
 
+    val action: String
     if (newInterval > currentAdaptiveInterval) {
       // 减速：需要连续6次慢才切
       slowSpeedCount++
+      action = if (slowSpeedCount < 6) "downgrade_pending" else "downgrade"
+      Timber.tag("OT-DEBUG").d("ADAPTIVE_DECISION: median_speed=${String.format("%.1f", avgSpeed * 3.6f)}km/h, target_interval=${newInterval}s, current_interval=${currentAdaptiveInterval}s, action=$action, slow_count=$slowSpeedCount/6")
+      RemoteDebugLogger.log("ADAPTIVE_DECISION", "Speed decreased, checking slow count", mapOf(
+          "median_speed_ms" to String.format("%.2f", avgSpeed),
+          "median_speed_kmh" to String.format("%.1f", avgSpeed * 3.6f),
+          "target_interval_s" to newInterval.toString(),
+          "current_interval_s" to currentAdaptiveInterval.toString(),
+          "action" to action,
+          "slow_count" to "$slowSpeedCount/6"
+      ))
       if (slowSpeedCount < 6) return
     } else if (newInterval < currentAdaptiveInterval) {
       // 加速：立即响应
       slowSpeedCount = 0
+      action = "upgrade"
+      Timber.tag("OT-DEBUG").d("ADAPTIVE_DECISION: median_speed=${String.format("%.1f", avgSpeed * 3.6f)}km/h, target_interval=${newInterval}s, current_interval=${currentAdaptiveInterval}s, action=$action, slow_count=0/6")
+      RemoteDebugLogger.log("ADAPTIVE_DECISION", "Speed increased, upgrading immediately", mapOf(
+          "median_speed_ms" to String.format("%.2f", avgSpeed),
+          "median_speed_kmh" to String.format("%.1f", avgSpeed * 3.6f),
+          "target_interval_s" to newInterval.toString(),
+          "current_interval_s" to currentAdaptiveInterval.toString(),
+          "action" to action,
+          "slow_count" to "0/6"
+      ))
     } else {
       slowSpeedCount = 0
+      action = "keep"
+      Timber.tag("OT-DEBUG").d("ADAPTIVE_DECISION: median_speed=${String.format("%.1f", avgSpeed * 3.6f)}km/h, target_interval=${newInterval}s, current_interval=${currentAdaptiveInterval}s, action=$action")
       return // 间隔没变
     }
 
@@ -204,12 +309,13 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
     lastIntervalSwitchTime = now
 
     // debug 日志
-    RemoteDebugLogger.log("ADAPTIVE_INTERVAL", "Speed-based interval adjustment", mapOf(
+    RemoteDebugLogger.log("ADAPTIVE_INTERVAL", "Speed-based interval adjustment executed", mapOf(
         "avg_speed_ms" to String.format("%.2f", avgSpeed),
         "avg_speed_kmh" to String.format("%.1f", avgSpeed * 3.6f),
         "new_interval" to newInterval.toString(),
         "old_interval" to oldInterval.toString(),
-        "speed_samples" to speedHistory.size.toString()
+        "speed_samples" to speedHistory.size.toString(),
+        "action" to action
     ))
     Timber.d(
         "ADAPTIVE: avg_speed=${String.format("%.2f", avgSpeed)} m/s " +
@@ -267,11 +373,21 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
     val request =
         LocationRequest(fastestInterval, smallestDisplacement, null, null, priority, interval, null, maxWaitDuration)
 
-    RemoteDebugLogger.log("LOCATION_REQUEST_UPDATE", "Re-registering location updates", mapOf(
-        "requested_interval" to intervalSeconds.toString(),
-        "actual_interval" to actualInterval.toString(),
-        "max_wait_time" to maxWaitTime.toString(),
-        "priority" to priority.toString()
+    val priorityLabel = when (priority) {
+      LocatorPriority.HighAccuracy -> "HIGH"
+      LocatorPriority.BalancedPowerAccuracy -> "BALANCED"
+      LocatorPriority.LowPower -> "LOW"
+      else -> priority.name
+    }
+    Timber.tag("OT-DEBUG").d("LOCATION_REQUEST_SETUP: requested=${intervalSeconds}s, actual=${actualInterval}s, maxWait=${maxWaitTime}ms, priority=$priorityLabel, displacement=${smallestDisplacement}m")
+    RemoteDebugLogger.log("LOCATION_REQUEST_SETUP", "Adaptive interval re-register", mapOf(
+        "requested_interval_s" to intervalSeconds.toString(),
+        "actual_interval_s" to actualInterval.toString(),
+        "max_wait_ms" to maxWaitTime.toString(),
+        "priority" to priorityLabel,
+        "displacement_m" to smallestDisplacement.toString(),
+        "fastest_interval_s" to fastestInterval.seconds.toString(),
+        "peg_fastest" to preferences.pegLocatorFastestIntervalToInterval.toString()
     ))
     Timber.d("ADAPTIVE: updating location request with interval=${intervalSeconds}s, actual=${actualInterval}s, maxWait=${maxWaitTime}ms, params=$request")
 
@@ -279,8 +395,11 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
     try {
       locationProviderClient.removeLocationUpdates(
           callbackForReportType[MessageLocation.ReportType.DEFAULT]!!.value)
+      Timber.tag("OT-DEBUG").d("LOCATION_UPDATES_REMOVED: success=true")
+      RemoteDebugLogger.log("LOCATION_UPDATES_REMOVED", "Removed old location updates before re-register", mapOf("success" to "true"))
     } catch (e: Exception) {
-      Timber.tag("OT-DEBUG").e(e, "Failed to remove old location updates before re-register")
+      Timber.tag("OT-DEBUG").e(e, "LOCATION_UPDATES_REMOVED: success=false, error=${e.message}")
+      RemoteDebugLogger.logWarn("LOCATION_UPDATES_REMOVED", "Failed to remove old location updates: ${e.message}", mapOf("success" to "false", "error" to (e.message ?: "unknown")))
     }
 
     locationProviderClient.flushLocations()
@@ -450,7 +569,13 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     Timber.v("Backgroundservice onStartCommand intent=$intent")
     Timber.tag("OT-DEBUG").d("BackgroundService.onStartCommand intent=${intent?.action}")
-    RemoteDebugLogger.log("SERVICE_START", "BackgroundService.onStartCommand", mapOf("action" to (intent?.action ?: "null")))
+    RemoteDebugLogger.log("SERVICE_ONSTART", "BackgroundService.onStartCommand", mapOf(
+        "action" to (intent?.action ?: "null"),
+        "startId" to startId.toString(),
+        "flags" to flags.toString(),
+        "flags_redelivery" to ((flags and 1) != 0).toString(),
+        "flags_retry" to ((flags and 2) != 0).toString()
+    ))
     super.onStartCommand(intent, flags, startId)
     handleIntent(intent)
     startForegroundService()
@@ -736,6 +861,18 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
       var interval: Duration? = null
       var smallestDisplacement: Float? = null
       val priority: LocatorPriority
+
+      Timber.tag("OT-DEBUG").d("MONITORING_MODE: current=${monitoring.name}, mode_value=${monitoring.value}")
+      RemoteDebugLogger.log("MONITORING_MODE", "setupLocationRequest called", mapOf(
+          "mode" to monitoring.name,
+          "mode_value" to monitoring.value.toString(),
+          "locator_interval" to preferences.locatorInterval.toString(),
+          "locator_displacement" to preferences.locatorDisplacement.toString(),
+          "move_mode_interval" to preferences.moveModeLocatorInterval.toString(),
+          "peg_fastest_interval" to preferences.pegLocatorFastestIntervalToInterval.toString(),
+          "adaptive_current_interval" to currentAdaptiveInterval.toString()
+      ))
+
       when (monitoring) {
         MonitoringMode.Quiet,
         MonitoringMode.Manual -> {
@@ -771,6 +908,16 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
           LocationRequest(
               fastestInterval, smallestDisplacement, null, null, priority, interval, null)
       Timber.d("location update request params: $request")
+      Timber.tag("OT-DEBUG").d("LOCATION_REQUEST_SETUP: requested=${interval.seconds}s, actual=${interval.seconds}s, maxWait=0ms, priority=${priority.name}, displacement=${smallestDisplacement}m")
+      RemoteDebugLogger.log("LOCATION_REQUEST_SETUP", "Location request setup via setupLocationRequest", mapOf(
+          "requested_interval_s" to interval.seconds.toString(),
+          "actual_interval_s" to interval.seconds.toString(),
+          "max_wait_ms" to "0",
+          "priority" to priority.name,
+          "displacement_m" to (smallestDisplacement ?: 0f).toString(),
+          "fastest_interval_s" to fastestInterval.seconds.toString(),
+          "mode" to monitoring.name
+      ))
       locationProviderClient.flushLocations()
       locationProviderClient.requestLocationUpdates(
           request,
@@ -778,6 +925,8 @@ class BackgroundService : LifecycleService(), Preferences.OnPreferenceChangeList
           runThingsOnOtherThreads.getBackgroundLooper())
       return Result.success(Unit)
     } else {
+      Timber.tag("OT-DEBUG").w("LOCATION_REQUEST_SETUP: FAILED - missing location permission")
+      RemoteDebugLogger.logWarn("LOCATION_REQUEST_SETUP", "Failed - missing location permission")
       return Result.failure(Exception("Missing location permission"))
     }
   }

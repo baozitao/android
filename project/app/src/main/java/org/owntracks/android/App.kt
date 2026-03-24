@@ -108,6 +108,25 @@ open class BaseApp :
   override fun onCreate() {
     Timber.tag("OT-DEBUG").d("App.onCreate started")
     RemoteDebugLogger.init(this)
+
+    // APP_INIT: 版本、flavor、构建类型信息
+    val versionName = try { BuildConfig.VERSION_NAME } catch (e: Exception) { "unknown" }
+    val flavor = try { BuildConfig.FLAVOR } catch (e: Exception) { "unknown" }
+    val buildType = try { BuildConfig.BUILD_TYPE } catch (e: Exception) { "unknown" }
+    val versionCode = try { BuildConfig.VERSION_CODE.toString() } catch (e: Exception) { "unknown" }
+    val isDebug = try { BuildConfig.DEBUG.toString() } catch (e: Exception) { "unknown" }
+    Timber.tag("OT-DEBUG").d("APP_INIT: version=$versionName, flavor=$flavor, build_type=$buildType, versionCode=$versionCode, isDebug=$isDebug")
+    RemoteDebugLogger.log("APP_INIT", "Application initializing", mapOf(
+        "version" to versionName,
+        "version_code" to versionCode,
+        "flavor" to flavor,
+        "build_type" to buildType,
+        "is_debug" to isDebug,
+        "android_sdk" to Build.VERSION.SDK_INT.toString(),
+        "device" to "${Build.MANUFACTURER} ${Build.MODEL}",
+        "process_id" to android.os.Process.myPid().toString()
+    ))
+
     RemoteDebugLogger.log("APP_START", "App.onCreate started")
     // Make sure we use Conscrypt for advanced TLS features on all devices.
     Security.insertProviderAt(Conscrypt.newProviderBuilder().provideTrustManager(true).build(), 1)
